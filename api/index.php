@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $res = supabase_sign_in($email, $pass);
             if ($res['error']) {
                 $errors[] = 'Invalid credentials.';
-                if (isset($_GET['debug'])) $errors[] = '[DEBUG] ' . $res['error'] . ' | status=' . $res['status'] . ' | body=' . json_encode($res['body']);
+                $errors[] = '[DEBUG] ' . $res['error'] . ' | status=' . $res['status'];
             } else {
                 supabase_store_session($res['body']);
                 $token = $res['body']['access_token'];
