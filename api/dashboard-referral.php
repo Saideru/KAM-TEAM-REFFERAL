@@ -24,6 +24,11 @@ $lastRejected = (!$pending && ($actTxns[0]['status'] ?? '') === 'failed' && !emp
 $pay = get_settings($token, ['payment_qr', 'payment_account', 'payment_instructions']);
 $payReady = $pay['payment_qr'] !== '';
 
+// Upcoming package changes, so referrals see them before they take effect.
+$chRes   = supabase_request('GET', '/rest/v1/package_changes?select=package_id,summary,effective_at&status=eq.scheduled', null, $token);
+$upcoming = [];
+foreach ((is_array($chRes['body']) && !$chRes['error']) ? $chRes['body'] : [] as $ch) $upcoming[$ch['package_id']] = $ch;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $act = $_POST['action'] ?? '';
 
@@ -33,26 +38,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 
         if (!$pkg) {
             $errors[] = 'That package is no longer available.';
+        } elseif ($pending) {
+            $errors[] = 'You already have a request waiting for admin approval.';
         } elseif ($pkg['tier'] === 'basic') {
-            // Basic is free: activate immediately and record a $0 activation.
-            $err = activate_account($token, $userId, 'basic');
-            if (!$err) {
-                supabase_request('POST', '/rest/v1/transactions', [
-                    'user_id' => $userId, 'package_id' => $pkg['id'], 'amount' => 0, 'type' => 'activation',
-                    'status' => 'completed', 'notes' => 'Free Basic activation',
-                ], $token, ['Prefer: return=minimal']);
-                audit_log($token, 'tier_activation', 'profile', $userId, 'Activated Basic — ' . $pkg['name']);
-                flash('success', 'Basic account activated. Your countdown has started.');
-                header('Location: /dashboard-client-basic.php?welcome=1'); exit;
+            // Basic is free, but still goes behind the approval wall.
+            $res = supabase_request('POST', '/rest/v1/transactions', [
+                'user_id' => $userId, 'package_id' => $pkg['id'], 'amount' => 0, 'type' => 'activation',
+                'status' => 'pending', 'notes' => 'Free Basic plan request',
+            ], $token, ['Prefer: return=minimal']);
+            if (!$res['error']) {
+                audit_log($token, 'plan_requested', 'profile', $userId, 'Requested Basic — ' . $pkg['name']);
+                notify($token, 'Basic plan request', $profile['full_name'] . ' asked for ' . $pkg['name'] . ' (free).', null, 'admin', '/dashboard-admin.php#approvals');
+                flash('success', 'Request sent. An admin will approve your Basic account shortly.');
+                header('Location: /dashboard-referral.php'); exit;
             }
-            $errors[] = $err;
+            $errors[] = $res['status'] === 409 ? 'You already have a request waiting for admin approval.' : 'Could not send your request. Please try again.';
         } else {
             // Standard: needs QR payment proof, then an admin must approve it.
             $refNo = trim((string) ($_POST['payment_ref'] ?? ''));
-            if ($pending) {
-                $errors[] = 'You already have a payment waiting for admin approval.';
-            } elseif (!$payReady) {
+            if (!$payReady) {
                 $errors[] = 'Payments are not open yet. Please contact an admin.';
+            } elseif (($profile['kyc_status'] ?? 'not_submitted') !== 'approved') {
+                $errors[] = 'Verify your identity before paying for a Standard plan.';
             } elseif (!preg_match('/^[A-Za-z0-9 #_\-]{4,64}$/', $refNo)) {
                 $errors[] = 'Enter the reference number from your payment receipt (4-64 letters/numbers).';
             } else {
@@ -63,6 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 ], $token, ['Prefer: return=minimal']);
                 if (!$res['error']) {
                     audit_log($token, 'payment_submitted', 'profile', $userId, $pkg['name'] . ' $' . number_format((float) $pkg['price'], 2) . ' ref ' . $refNo);
+                    notify($token, 'Payment to verify', $profile['full_name'] . ' paid $' . number_format((float) $pkg['price'], 2) . ' for ' . $pkg['name'] . ' — ref ' . $refNo . '.', null, 'admin', '/dashboard-admin.php#approvals');
                     flash('success', 'Payment submitted. An admin will verify it and activate your Standard account.');
                     header('Location: /dashboard-referral.php'); exit;
                 }
@@ -86,6 +94,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 $firstName = explode(' ', $profile['full_name'])[0];
 $shareLink = APP_URL . '/index.php?ref=' . urlencode($profile['referral_code'] ?? '');
 $totalRefs = count($referrals);
+$comPct    = commission_pct($token);
+
+$comRes      = supabase_request('GET', '/rest/v1/transactions?select=amount,created_at,source:profiles!transactions_source_user_id_fkey(full_name)&type=eq.commission&status=eq.completed&user_id=eq.' . urlencode($userId) . '&order=created_at.desc&limit=20', null, $token);
+$commissions = is_array($comRes['body']) && !$comRes['error'] ? $comRes['body'] : [];
+$earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions));
 ?>
 <!doctype html>
 <html lang="en">
@@ -100,6 +113,7 @@ $totalRefs = count($referrals);
   <div class="topbar-inner">
     <?= kam_lockup() ?>
     <div style="display:flex;align-items:center;gap:10px">
+      <?= notif_bell($token, $profile, $csrf) ?>
       <span class="role-label referral">Referral</span>
       <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
     </div>
@@ -111,6 +125,7 @@ $totalRefs = count($referrals);
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--yellow)">Choose your path.</span></h1>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
+  <?= kyc_banner($profile) ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
   <section>
@@ -121,22 +136,22 @@ $totalRefs = count($referrals);
       <?php if ($pending): ?>
         <div class="pending-box">
           <span class="label" style="color:var(--rust)"><span class="dot"></span>Awaiting admin approval</span>
-          <h3><?= e($pending['packages']['name'] ?? 'Standard') ?> — $<?= number_format((float) $pending['amount'], 2) ?></h3>
+          <h3><?= e($pending['packages']['name'] ?? 'Plan') ?> — <?= (float) $pending['amount'] > 0 ? '$' . number_format((float) $pending['amount'], 2) : 'Free' ?></h3>
           <div class="profile-info">
-            <div class="profile-row"><span class="label">Reference</span><span><?= e($pending['payment_ref'] ?? '—') ?></span></div>
+            <?php if (!empty($pending['payment_ref'])): ?><div class="profile-row"><span class="label">Reference</span><span><?= e($pending['payment_ref']) ?></span></div><?php endif; ?>
             <div class="profile-row"><span class="label">Submitted</span><span><?= date('M j, Y H:i', strtotime($pending['created_at'])) ?></span></div>
             <div class="profile-row"><span class="label">Status</span><span class="pill pending">pending</span></div>
           </div>
-          <p class="output" style="margin:12px 0">An admin is verifying your payment. Your account switches to <strong><?= e(ucfirst($pending['packages']['tier'] ?? 'standard')) ?></strong> automatically once approved.</p>
-          <form method="post" onsubmit="return confirm('Cancel this payment request?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="action" value="cancel_request">
+          <p class="output" style="margin:12px 0"><?= (float) $pending['amount'] > 0 ? 'An admin is verifying your payment.' : 'An admin is reviewing your request.' ?> Your account switches to <strong><?= e(ucfirst($pending['packages']['tier'] ?? 'standard')) ?></strong> automatically once approved.</p>
+          <form method="post" onsubmit="return confirm('Cancel this request?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="action" value="cancel_request">
             <button class="btn btn-ghost btn-sm" type="submit">Cancel request</button>
           </form>
         </div>
       <?php else: ?>
-        <div class="output" style="margin-bottom:16px">Pick a plan. Basic is free and starts now. Standard is activated once an admin confirms your payment.</div>
+        <div class="output" style="margin-bottom:16px">Pick a plan. Basic is free; Standard is paid via QR. An admin approves every plan before it starts.</div>
 
         <?php if ($lastRejected): ?>
-          <div class="alert alert-warn">Your last payment (ref <?= e($lastRejected['payment_ref'] ?? '—') ?>) was not approved. <?= e(preg_replace('/^Rejected by admin\.\s*/', '', (string) ($lastRejected['notes'] ?? ''))) ?> You can submit a new one below.</div>
+          <div class="alert alert-warn">Your last plan request<?= !empty($lastRejected['payment_ref']) ? ' (ref ' . e($lastRejected['payment_ref']) . ')' : '' ?> was not approved. <?= e(preg_replace('/^Rejected by admin\.\s*/', '', (string) ($lastRejected['notes'] ?? ''))) ?> You can send a new one below.</div>
         <?php endif; ?>
 
         <?php if (!$packages): ?><p class="empty">No plans available yet. Please check back soon.</p><?php endif; ?>
@@ -148,6 +163,7 @@ $totalRefs = count($referrals);
             <h3 class="tier-name"><?= e($pk['name']) ?></h3>
             <div class="tier-price <?= $std ? 'orange' : '' ?>" style="<?= $std ? '' : 'color:var(--green)' ?>"><?= $std ? '$' . number_format((float) $pk['price'], 2) : 'Free' ?></div>
             <?php if (!empty($pk['description'])): ?><p class="tier-desc"><?= e($pk['description']) ?></p><?php endif; ?>
+            <?php if (isset($upcoming[$pk['id']])): $up = $upcoming[$pk['id']]; ?><p class="tier-upcoming">Changing <?= date('M j, Y', strtotime($up['effective_at'])) ?>: <?= e($up['summary']) ?></p><?php endif; ?>
             <ul class="tier-features">
               <?php if ($std): ?>
                 <li>27-month base lifecycle</li>
@@ -162,7 +178,7 @@ $totalRefs = count($referrals);
 
             <?php if (!$std): ?>
               <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="action" value="choose_package"><input type="hidden" name="package_id" value="<?= e($pk['id']) ?>">
-                <button class="btn" type="submit" style="border-color:var(--green);color:var(--green)">Activate free →</button>
+                <button class="btn" type="submit" style="border-color:var(--green);color:var(--green)">Request free plan →</button>
               </form>
             <?php else: ?>
               <details class="paywall">
@@ -170,6 +186,14 @@ $totalRefs = count($referrals);
                 <div class="paywall-body">
                   <?php if (!$payReady): ?>
                     <p class="alert alert-warn" style="margin:0">Payments aren't open yet — an admin still needs to add the payment QR code.</p>
+                  <?php elseif (($profile['kyc_status'] ?? 'not_submitted') !== 'approved'): ?>
+                    <p class="alert alert-warn" style="margin:0">
+                      <?php if (($profile['kyc_status'] ?? '') === 'pending'): ?>
+                        Your identity documents are being reviewed. You can pay for Standard once they're approved.
+                      <?php else: ?>
+                        Verify your identity before paying for a Standard plan. <a href="/kyc.php">Verify now →</a>
+                      <?php endif; ?>
+                    </p>
                   <?php else: ?>
                     <span class="label">Step 1 // Scan &amp; pay exactly $<?= number_format((float) $pk['price'], 2) ?></span>
                     <img class="paywall-qr" src="<?= e($pay['payment_qr']) ?>" alt="Payment QR code" width="220" height="220">
@@ -197,7 +221,29 @@ $totalRefs = count($referrals);
       <input id="share-link" type="text" readonly value="<?= e($shareLink) ?>">
       <button class="btn btn-sm" type="button" id="copy-btn">Copy →</button>
     </div>
+    <p style="margin:10px 0 0;font-size:12px;color:var(--text-dim)">Your code is <strong style="color:var(--cyan)"><?= e($profile['referral_code'] ?? '') ?></strong> — anyone who enters it when signing up is credited to you, and you earn <?= e(pct_label($comPct)) ?>% whenever they pay for a plan.</p>
   </section>
+
+  <?php if ($earned > 0 || $commissions): ?>
+  <section class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <span class="label">Referral earnings</span>
+      <span class="big green" style="margin:0">$<?= number_format($earned, 2) ?></span>
+    </div>
+    <?php if ($commissions): ?>
+      <div class="table-scroll" style="margin-top:10px"><table>
+        <thead><tr><th>From</th><th>Amount</th><th>Date</th></tr></thead>
+        <tbody><?php foreach ($commissions as $c): ?>
+          <tr>
+            <td style="font-size:12px"><?= e($c['source']['full_name'] ?? '—') ?></td>
+            <td style="color:var(--green)">$<?= number_format((float) $c['amount'], 2) ?></td>
+            <td style="font-size:12px"><?= date('M j, Y', strtotime($c['created_at'])) ?></td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div>
+    <?php endif; ?>
+  </section>
+  <?php endif; ?>
 
   <?php if ($referrals): ?>
   <section class="card">

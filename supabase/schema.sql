@@ -11,6 +11,8 @@ create extension if not exists pgcrypto with schema extensions;
 -- Roles: admin | client_basic | client_standard | referral
 -- Status: pending | accepted | suspended
 -- ---------------------------------------------------------------------
+drop table if exists public.package_changes cascade;
+drop table if exists public.notifications cascade;
 drop table if exists public.app_settings cascade;
 drop table if exists public.system_logs cascade;
 drop table if exists public.transactions cascade;
@@ -32,7 +34,12 @@ create table public.profiles (
   role                text not null default 'referral'
                         check (role in ('admin', 'client_basic', 'client_standard', 'referral')),
   status              text not null default 'pending'
-                        check (status in ('pending', 'accepted', 'suspended')),
+                        check (status in ('pending', 'accepted', 'suspended', 'rejected')),
+  -- Document images live in kyc_submissions; this is just the cheap flag
+  kyc_status          text not null default 'not_submitted'
+                        check (kyc_status in ('not_submitted', 'pending', 'approved', 'rejected')),
+  review_note         text,
+  notif_seen_at       timestamptz not null default now(),
   lifecycle_expires_at timestamptz,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
@@ -40,6 +47,7 @@ create table public.profiles (
 );
 
 create index profiles_username_idx on public.profiles (username);
+create index profiles_kyc_status_idx on public.profiles (kyc_status);
 create index profiles_role_idx on public.profiles (role);
 create index profiles_status_idx on public.profiles (status);
 create index profiles_referral_code_idx on public.profiles (referral_code);
@@ -76,6 +84,8 @@ create table public.transactions (
   payment_ref text,
   reviewed_by uuid references public.profiles (id) on delete set null,
   reviewed_at timestamptz,
+  -- For commission rows: the referred user whose activation earned it
+  source_user_id uuid references public.profiles (id) on delete set null,
   created_at  timestamptz not null default now()
 );
 
@@ -84,6 +94,10 @@ create index transactions_type_idx on public.transactions (type);
 create unique index transactions_one_pending_activation
   on public.transactions (user_id)
   where type = 'activation' and status = 'pending';
+-- One commission per activation, so a double-approve cannot pay twice
+create unique index transactions_one_commission_per_source
+  on public.transactions (user_id, source_user_id)
+  where type = 'commission' and source_user_id is not null;
 
 -- ---------------------------------------------------------------------
 -- 03b // APP SETTINGS  (payment QR, account name, instructions)
@@ -93,6 +107,41 @@ create table public.app_settings (
   value       text,
   updated_at  timestamptz not null default now()
 );
+
+-- ---------------------------------------------------------------------
+-- 03c // NOTIFICATIONS  (per user, or broadcast when user_id is null)
+-- ---------------------------------------------------------------------
+create table public.notifications (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid references public.profiles (id) on delete cascade,
+  audience    text not null default 'all'
+                check (audience in ('all', 'admin', 'client_basic', 'client_standard', 'referral')),
+  title       text not null,
+  body        text,
+  link        text,
+  created_at  timestamptz not null default now()
+);
+create index notifications_user_idx    on public.notifications (user_id);
+create index notifications_created_idx on public.notifications (created_at desc);
+
+-- ---------------------------------------------------------------------
+-- 03d // PACKAGE CHANGES  (admin edits, applied 1-7 days later)
+-- ---------------------------------------------------------------------
+create table public.package_changes (
+  id           uuid primary key default gen_random_uuid(),
+  package_id   uuid not null references public.packages (id) on delete cascade,
+  changes      jsonb not null,
+  summary      text,
+  effective_at timestamptz not null,
+  status       text not null default 'scheduled'
+                 check (status in ('scheduled', 'applied', 'cancelled')),
+  created_by   uuid references public.profiles (id) on delete set null,
+  created_at   timestamptz not null default now(),
+  applied_at   timestamptz
+);
+create index package_changes_due_idx on public.package_changes (status, effective_at);
+create unique index package_changes_one_scheduled
+  on public.package_changes (package_id) where status = 'scheduled';
 
 -- ---------------------------------------------------------------------
 -- 04 // REFERRALS  (user-to-user referral tree)
@@ -132,6 +181,34 @@ create table public.client_services (
 );
 
 create index client_services_client_idx on public.client_services (client_id);
+
+-- ---------------------------------------------------------------------
+-- 05b // KYC SUBMISSIONS  (one row per user, replaced on resubmission)
+-- Kept out of profiles so page loads don't re-fetch the ID images.
+-- ---------------------------------------------------------------------
+create table public.kyc_submissions (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null unique references public.profiles (id) on delete cascade,
+  legal_name   text not null,
+  dob          date,
+  address      text,
+  id_type      text not null
+                 check (id_type in ('national_id', 'passport', 'drivers_license', 'postal_id', 'other')),
+  id_number    text not null,
+  id_front     text,
+  id_back      text,
+  selfie       text,
+  status       text not null default 'pending'
+                 check (status in ('pending', 'approved', 'rejected')),
+  note         text,
+  reviewed_by  uuid references public.profiles (id) on delete set null,
+  reviewed_at  timestamptz,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create index kyc_status_idx  on public.kyc_submissions (status);
+create index kyc_created_idx on public.kyc_submissions (created_at desc);
 
 -- ---------------------------------------------------------------------
 -- 06 // SYSTEM LOGS  (audit trail — CCTV-like)
@@ -232,6 +309,26 @@ create trigger profiles_link_referral
   after insert on public.profiles
   for each row execute function public.link_referral();
 
+drop trigger if exists kyc_touch_updated_at on public.kyc_submissions;
+create trigger kyc_touch_updated_at
+  before update on public.kyc_submissions
+  for each row execute function public.touch_updated_at();
+
+-- Keep profiles.kyc_status in step with the submission
+create or replace function public.sync_kyc_status()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+begin
+  update public.profiles set kyc_status = new.status where id = new.user_id;
+  return new;
+end;
+$$;
+
+drop trigger if exists kyc_sync_status on public.kyc_submissions;
+create trigger kyc_sync_status
+  after insert or update of status on public.kyc_submissions
+  for each row execute function public.sync_kyc_status();
+
 -- ---------------------------------------------------------------------
 -- 08 // ROW LEVEL SECURITY — deny-all to anon/authenticated
 --
@@ -249,10 +346,17 @@ alter table public.packages        enable row level security;
 alter table public.transactions    enable row level security;
 alter table public.system_logs     enable row level security;
 alter table public.app_settings    enable row level security;
+alter table public.notifications   enable row level security;
+alter table public.package_changes enable row level security;
+alter table public.kyc_submissions enable row level security;
 
 -- ---------------------------------------------------------------------
--- 09 // SEED DEFAULT PACKAGES
+-- 09 // SEED SETTINGS + DEFAULT PACKAGES
 -- ---------------------------------------------------------------------
+-- Percent of an activation paid to the referrer. Admin-editable.
+insert into public.app_settings (key, value) values ('referral_commission_pct', '5')
+on conflict (key) do nothing;
+
 insert into public.packages (name, description, price, commission_outright, commission_unilevel, tier) values
   ('Basic Starter',    'Entry-level 3-month access',          0.00,   10.00, 0,    'basic'),
   ('Standard Pro',     'Full 27-month access with unilevel',  100.00, 25.00, 5.00, 'standard'),

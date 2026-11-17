@@ -126,10 +126,15 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         return ['error' => 'That username is already taken.', 'profile' => null];
     }
 
+    // A typo'd code is reported rather than ignored, otherwise the referrer
+    // silently never gets credited and nobody notices.
     $referrer = null;
     if (!empty($meta['ref'])) {
         $r = supabase_request('GET', '/rest/v1/profiles?select=id&deleted_at=is.null&referral_code=eq.' . urlencode(strtoupper(trim($meta['ref']))));
         $referrer = $r['body'][0]['id'] ?? null;
+        if (!$referrer) {
+            return ['error' => 'That referral code does not exist. Check it, or leave it blank.', 'profile' => null];
+        }
     }
 
     // Standard can never be self-assigned at sign-up: it requires a paid,
@@ -137,8 +142,9 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
     $role = in_array($meta['role'] ?? '', ['client_basic', 'referral'], true)
         ? $meta['role'] : 'referral';
 
+    // Every new account waits behind the approval wall until an admin accepts
+    // it; the lifecycle clock starts at approval (see approve_application()).
     $res = supabase_request('POST', '/rest/v1/profiles', [
-        'lifecycle_expires_at' => tier_expiry($role),
         'full_name'     => $meta['full_name'] ?: $username,
         'username'      => $username,
         'email'         => $email ?: null,
@@ -147,13 +153,18 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         'company'       => $meta['company'] ?: null,
         'referred_by'   => $referrer,
         'role'          => $role,
-        'status'        => 'accepted',
+        'status'        => 'pending',
     ], null, ['Prefer: return=representation']);
 
     if ($res['error']) {
         return ['error' => $res['error'], 'profile' => null];
     }
-    return ['error' => null, 'profile' => $res['body'][0] ?? null];
+    $new = $res['body'][0] ?? null;
+    if ($new) {
+        notify(SUPABASE_SERVICE_KEY, 'New account application',
+            ($new['full_name'] ?? $username) . ' applied as ' . role_name($role) . '.', null, 'admin', '/dashboard-admin.php#approvals');
+    }
+    return ['error' => null, 'profile' => $new];
 }
 
 // Verifies the password against the stored bcrypt hash.
@@ -250,20 +261,32 @@ function check_account_status(?array $profile): bool
     return true;
 }
 
-function redirect_by_role(?string $welcome = null): void
+function is_walled(?array $profile): bool
 {
-    $profile = current_profile();
-    $role    = $profile['role'] ?? 'referral';
-    $qs      = $welcome ? '?welcome=1' : '';
+    return $profile && ($profile['role'] ?? '') !== 'admin'
+        && in_array($profile['status'] ?? '', ['pending', 'rejected'], true);
+}
 
-    $map = [
+function dashboard_url(string $role): string
+{
+    return [
         'admin'           => '/dashboard-admin.php',
         'client_basic'    => '/dashboard-client-basic.php',
         'client_standard' => '/dashboard-client-standard.php',
         'referral'        => '/dashboard-referral.php',
-    ];
+    ][$role] ?? '/dashboard-referral.php';
+}
 
-    header('Location: ' . ($map[$role] ?? '/dashboard-referral.php') . $qs);
+function redirect_by_role(?string $welcome = null): void
+{
+    $profile = current_profile();
+
+    if (is_walled($profile)) {
+        header('Location: /pending.php');
+        exit;
+    }
+
+    header('Location: ' . dashboard_url($profile['role'] ?? 'referral') . ($welcome ? '?welcome=1' : ''));
     exit;
 }
 
@@ -273,6 +296,14 @@ function require_role(string|array $allowed): array
     $profile = current_profile($token);
     $role    = $profile['role'] ?? '';
     $allowed = (array) $allowed;
+
+    // Approval wall: unapproved applications can't reach any dashboard.
+    if (is_walled($profile)) {
+        header('Location: /pending.php');
+        exit;
+    }
+
+    apply_due_package_changes();
 
     if (!in_array($role, $allowed, true)) {
         http_response_code(403);
@@ -367,7 +398,63 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
 
     audit_log($token, 'approve_activation', 'transaction', $txnId,
         'Approved ' . ($txn['packages']['name'] ?? $tier) . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—'));
+    notify($token, ucfirst($tier) . ' account approved',
+        'Your ' . ($txn['packages']['name'] ?? ucfirst($tier)) . ' plan is now active. Your countdown has started.', $txn['user_id']);
+
+    pay_referral_commission($token, $txn);
     return null;
+}
+
+// =====================================================================
+// Referral commission
+// =====================================================================
+
+// Percent of an activation paid to whoever referred the buyer.
+function commission_pct(string $token): float
+{
+    $raw = get_settings($token, ['referral_commission_pct'])['referral_commission_pct'];
+    return $raw === '' ? 5.0 : max(0.0, min(100.0, (float) $raw));
+}
+
+// 5.0 -> "5", 7.5 -> "7.5", 10.0 -> "10"
+function pct_label(float $pct): string
+{
+    return rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.');
+}
+
+// Credits the referrer when a referred user's paid activation is approved.
+// Free (zero-amount) activations earn nothing. The unique index on
+// (user_id, source_user_id) makes a repeat approval a no-op rather than
+// paying the same commission twice.
+function pay_referral_commission(string $token, array $txn): void
+{
+    $amount = (float) $txn['amount'];
+    $pct    = commission_pct($token);
+    if ($amount <= 0 || $pct <= 0) return;
+
+    $buyerRes = supabase_request('GET', '/rest/v1/profiles?select=id,full_name,username,referred_by&id=eq.' . urlencode($txn['user_id']), null, $token);
+    $buyer    = $buyerRes['body'][0] ?? null;
+    $referrer = $buyer['referred_by'] ?? null;
+    if (!$referrer) return;
+
+    $commission = round($amount * $pct / 100, 2);
+    if ($commission <= 0) return;
+
+    $res = supabase_request('POST', '/rest/v1/transactions', [
+        'user_id'        => $referrer,
+        'package_id'     => $txn['package_id'] ?? null,
+        'source_user_id' => $txn['user_id'],
+        'amount'         => $commission,
+        'type'           => 'commission',
+        'status'         => 'completed',
+        'notes'          => pct_label($pct) . '% referral commission from ' . ($buyer['full_name'] ?? 'a referral'),
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return;
+
+    audit_log($token, 'referral_commission', 'transaction', $txn['id'],
+        'Paid $' . number_format($commission, 2) . ' (' . pct_label($pct) . '%) to referrer of ' . ($buyer['username'] ?? $txn['user_id']));
+    notify($token, 'You earned $' . number_format($commission, 2),
+        ($buyer['full_name'] ?? 'Someone you referred') . ' activated a paid plan, so you earned ' . pct_label($pct) . '% of it.', $referrer);
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -383,6 +470,283 @@ function reject_activation(string $token, string $txnId, string $adminId, string
     if ($res['error']) return $res['error'];
 
     audit_log($token, 'reject_activation', 'transaction', $txnId, 'Rejected payment ref ' . ($txn['payment_ref'] ?? '—') . ($reason !== '' ? ' — ' . $reason : ''));
+    notify($token, 'Plan request not approved',
+        trim(($txn['packages']['name'] ?? 'Your plan') . ' was not approved. ' . $reason) . ' You can submit a new request.', $txn['user_id']);
+    return null;
+}
+
+// =====================================================================
+// Approval wall — account applications
+// =====================================================================
+
+function role_name(string $role): string
+{
+    return ['admin' => 'Admin', 'client_basic' => 'Basic client', 'client_standard' => 'Standard client', 'referral' => 'Referral'][$role] ?? $role;
+}
+
+function approve_application(string $token, string $userId): ?string
+{
+    $res = supabase_request('GET', '/rest/v1/profiles?select=id,role,status&id=eq.' . urlencode($userId), null, $token);
+    $p   = $res['body'][0] ?? null;
+    if (!$p) return 'User not found.';
+    if (!in_array($p['status'], ['pending', 'rejected'], true)) return 'This application was already reviewed.';
+
+    $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), [
+        'status' => 'accepted', 'review_note' => null,
+        'lifecycle_expires_at' => tier_expiry($p['role']),   // clock starts on approval
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return $res['error'];
+
+    audit_log($token, 'approve_application', 'profile', $userId, 'Approved ' . role_name($p['role']) . ' application');
+    notify($token, 'Application approved', 'Welcome aboard — your ' . role_name($p['role']) . ' account is active.', $userId);
+    return null;
+}
+
+function reject_application(string $token, string $userId, string $reason): ?string
+{
+    $res = supabase_request('PATCH', '/rest/v1/profiles?status=in.(pending,rejected)&id=eq.' . urlencode($userId), [
+        'status' => 'rejected', 'review_note' => $reason !== '' ? $reason : null,
+    ], $token, ['Prefer: return=representation']);
+    if ($res['error']) return $res['error'];
+    if (empty($res['body'])) return 'This application was already reviewed.';
+
+    audit_log($token, 'reject_application', 'profile', $userId, 'Rejected application' . ($reason !== '' ? ' — ' . $reason : ''));
+    return null;
+}
+
+// =====================================================================
+// Notifications
+// =====================================================================
+
+function notify(string $token, string $title, ?string $body = null, ?string $userId = null, string $audience = 'all', ?string $link = null): void
+{
+    supabase_request('POST', '/rest/v1/notifications', [
+        'user_id' => $userId, 'audience' => $userId ? 'all' : $audience,
+        'title' => mb_substr($title, 0, 200), 'body' => $body !== null ? mb_substr($body, 0, 1000) : null, 'link' => $link,
+    ], $token, ['Prefer: return=minimal']);
+}
+
+// Personal notifications plus broadcasts to everyone or to the user's role.
+function fetch_notifications(string $token, array $profile, int $limit = 20): array
+{
+    $role = $profile['role'] ?? 'referral';
+    $or   = 'or=(user_id.eq.' . $profile['id'] . ',and(user_id.is.null,audience.in.(all,' . $role . ')))';
+    $res  = supabase_request('GET', '/rest/v1/notifications?select=*&' . $or . '&order=created_at.desc&limit=' . $limit, null, $token);
+    return is_array($res['body']) && !$res['error'] ? $res['body'] : [];
+}
+
+function notif_bell(string $token, array $profile, string $csrf): string
+{
+    $items  = fetch_notifications($token, $profile);
+    $seen   = strtotime($profile['notif_seen_at'] ?? '1970-01-01');
+    $unread = count(array_filter($items, fn($n) => strtotime($n['created_at']) > $seen));
+
+    $list = '';
+    foreach ($items as $n) {
+        $isNew = strtotime($n['created_at']) > $seen;
+        $inner = '<strong>' . e($n['title']) . '</strong>'
+            . ($n['body'] ? '<span>' . e($n['body']) . '</span>' : '')
+            . '<time>' . e(date('M j, H:i', strtotime($n['created_at']))) . '</time>';
+        $list .= $n['link']
+            ? '<a class="notif-item' . ($isNew ? ' is-new' : '') . '" href="' . e($n['link']) . '">' . $inner . '</a>'
+            : '<div class="notif-item' . ($isNew ? ' is-new' : '') . '">' . $inner . '</div>';
+    }
+    if ($list === '') $list = '<p class="notif-empty">No notifications yet.</p>';
+
+    return '<details class="notif" data-csrf="' . e($csrf) . '">'
+        . '<summary class="notif-btn" aria-label="Notifications' . ($unread ? " ($unread unread)" : '') . '">'
+        . '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
+        . ($unread ? '<span class="notif-count">' . ($unread > 9 ? '9+' : $unread) . '</span>' : '')
+        . '</summary>'
+        . '<div class="notif-panel"><div class="notif-head">Notifications</div>' . $list . '</div>'
+        . '</details>'
+        . '<script>(function(){var d=document.currentScript.previousElementSibling;d.addEventListener("toggle",function(){'
+        . 'if(!d.open||!d.querySelector(".notif-count"))return;var f=new FormData();f.append("csrf",d.dataset.csrf);'
+        . 'fetch("/notifications.php",{method:"POST",body:f,credentials:"same-origin"}).then(function(){var c=d.querySelector(".notif-count");if(c)c.remove();});});'
+        . 'document.addEventListener("click",function(e){if(d.open&&!d.contains(e.target))d.open=false;});})();</script>';
+}
+
+// =====================================================================
+// Scheduled package changes (1-7 day notice, then permanent)
+// =====================================================================
+
+const PACKAGE_FIELDS = ['name', 'description', 'price', 'commission_outright', 'commission_unilevel', 'tier', 'active'];
+
+function describe_package_changes(array $old, array $new): string
+{
+    $label = ['name' => 'Name', 'description' => 'Description', 'price' => 'Price', 'commission_outright' => 'Outright commission',
+              'commission_unilevel' => 'Unilevel %', 'tier' => 'Tier', 'active' => 'Availability'];
+    $fmt = function (string $k, $v): string {
+        if ($k === 'active') return $v ? 'available' : 'hidden';
+        if (in_array($k, ['price', 'commission_outright'], true)) return '$' . number_format((float) $v, 2);
+        if ($k === 'commission_unilevel') return rtrim(rtrim(number_format((float) $v, 2), '0'), '.') . '%';
+        return (string) ($v ?? '—');
+    };
+    $parts = [];
+    foreach ($new as $k => $v) $parts[] = $label[$k] . ': ' . $fmt($k, $old[$k] ?? null) . ' → ' . $fmt($k, $v);
+    return implode('; ', $parts);
+}
+
+function schedule_package_change(string $token, array $pkg, array $changes, int $days, string $adminId): ?string
+{
+    if ($days < 1 || $days > 7) return 'Pick a notice period between 1 and 7 days.';
+    if (!$changes)              return 'Nothing changed.';
+
+    $effective = date('c', strtotime("+{$days} days"));
+    $summary   = describe_package_changes($pkg, $changes);
+    $res = supabase_request('POST', '/rest/v1/package_changes', [
+        'package_id' => $pkg['id'], 'changes' => $changes, 'summary' => $summary,
+        'effective_at' => $effective, 'created_by' => $adminId,
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) {
+        return $res['status'] === 409 ? 'This package already has a scheduled change — cancel it first.' : $res['error'];
+    }
+
+    audit_log($token, 'schedule_package_change', 'package', $pkg['id'], $pkg['name'] . ' on ' . date('M j', strtotime($effective)) . ': ' . $summary);
+    notify($token, 'Upcoming change: ' . $pkg['name'],
+        'Takes effect ' . date('M j, Y', strtotime($effective)) . '. ' . $summary);
+    return null;
+}
+
+function cancel_package_change(string $token, string $changeId): ?string
+{
+    $res = supabase_request('PATCH', '/rest/v1/package_changes?status=eq.scheduled&id=eq.' . urlencode($changeId),
+        ['status' => 'cancelled'], $token, ['Prefer: return=representation']);
+    if ($res['error']) return $res['error'];
+    $row = $res['body'][0] ?? null;
+    if (!$row) return 'That change was already applied or cancelled.';
+
+    $pkg = supabase_request('GET', '/rest/v1/packages?select=name&id=eq.' . urlencode($row['package_id']), null, $token)['body'][0]['name'] ?? 'a package';
+    audit_log($token, 'cancel_package_change', 'package', $row['package_id'], 'Cancelled: ' . ($row['summary'] ?? ''));
+    notify($token, 'Change cancelled: ' . $pkg, 'The scheduled change will not happen. ' . ($row['summary'] ?? ''));
+    return null;
+}
+
+// Applies every scheduled change whose date has passed. Runs on each
+// dashboard load, so no cron is needed. Each change is claimed with a
+// conditional update first, so it is never applied twice.
+function apply_due_package_changes(): void
+{
+    static $done = false;
+    if ($done) return;
+    $done  = true;
+    $token = SUPABASE_SERVICE_KEY;
+
+    $due = supabase_request('GET', '/rest/v1/package_changes?select=*,packages(name)&status=eq.scheduled&effective_at=lte.' . rawurlencode(date('c')), null, $token);
+    foreach ((is_array($due['body']) && !$due['error']) ? $due['body'] : [] as $ch) {
+        $claim = supabase_request('PATCH', '/rest/v1/package_changes?status=eq.scheduled&id=eq.' . urlencode($ch['id']),
+            ['status' => 'applied', 'applied_at' => date('c')], $token, ['Prefer: return=representation']);
+        if (empty($claim['body'])) continue;
+
+        $changes = array_intersect_key((array) $ch['changes'], array_flip(PACKAGE_FIELDS));
+        supabase_request('PATCH', '/rest/v1/packages?id=eq.' . urlencode($ch['package_id']), $changes, $token, ['Prefer: return=minimal']);
+        supabase_request('POST', '/rest/v1/system_logs', [
+            'action' => 'apply_package_change', 'entity_type' => 'package', 'entity_id' => $ch['package_id'],
+            'summary' => 'Applied: ' . ($ch['summary'] ?? ''), 'ip_address' => 'scheduler',
+        ], $token, ['Prefer: return=minimal']);
+        notify($token, 'Now live: ' . ($changes['name'] ?? $ch['packages']['name'] ?? 'package update'), $ch['summary'] ?? null);
+    }
+}
+
+// =====================================================================
+// KYC verification
+// =====================================================================
+
+const KYC_ID_TYPES = [
+    'national_id'     => 'National ID',
+    'passport'        => 'Passport',
+    'drivers_license' => "Driver's licence",
+    'postal_id'       => 'Postal ID',
+    'other'           => 'Other government ID',
+];
+
+// Status banner + link to /kyc.php, shown on every member dashboard.
+function kyc_banner(array $profile): string
+{
+    return match ($profile['kyc_status'] ?? 'not_submitted') {
+        'approved' => '<div class="card" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'
+            . '<span class="label">Identity</span><span class="pill active">Verified</span></div>',
+        'pending'  => '<div class="alert alert-warn">Your identity documents are in review. <a href="/kyc.php">View submission →</a></div>',
+        'rejected' => '<div class="alert alert-error">Your identity check was not approved. <a href="/kyc.php">Submit again →</a></div>',
+        default    => '<div class="alert alert-warn">Your account is not verified yet. <a href="/kyc.php">Verify your identity →</a></div>',
+    };
+}
+
+// Validates an uploaded image and returns it as a data URI.
+// Returns null and sets $err when the file is missing or unacceptable.
+function image_data_uri(?array $file, int $maxBytes, ?string &$err): ?string
+{
+    $err = null;
+    if (empty($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) return null;
+
+    $mime = (@getimagesize($file['tmp_name']))['mime'] ?? '';
+    if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) {
+        $err = 'Images must be PNG, JPG or WEBP.';
+        return null;
+    }
+    if ($file['size'] > $maxBytes) {
+        $err = 'Each image must be under ' . round($maxBytes / 1024) . ' KB.';
+        return null;
+    }
+    return 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($file['tmp_name']));
+}
+
+// $withImages is false on dashboards so the data URIs aren't fetched
+// on pages that only need the status.
+function kyc_submission(string $token, string $userId, bool $withImages = false): ?array
+{
+    $cols = $withImages ? '*' : 'id,user_id,legal_name,dob,address,id_type,id_number,status,note,reviewed_at,created_at,updated_at';
+    $res  = supabase_request('GET', '/rest/v1/kyc_submissions?select=' . $cols . '&user_id=eq.' . urlencode($userId), null, $token);
+    return $res['body'][0] ?? null;
+}
+
+// Inserts or replaces this user's submission and puts it back in review.
+function submit_kyc(string $token, string $userId, array $data): ?string
+{
+    $row = [
+        'user_id'     => $userId,
+        'legal_name'  => $data['legal_name'],
+        'dob'         => $data['dob'] ?: null,
+        'address'     => $data['address'] ?: null,
+        'id_type'     => $data['id_type'],
+        'id_number'   => $data['id_number'],
+        'status'      => 'pending',
+        'note'        => null,
+        'reviewed_by' => null,
+        'reviewed_at' => null,
+    ];
+    // Only overwrite images the user actually re-uploaded
+    foreach (['id_front', 'id_back', 'selfie'] as $k) {
+        if (!empty($data[$k])) $row[$k] = $data[$k];
+    }
+
+    $res = supabase_request('POST', '/rest/v1/kyc_submissions?on_conflict=user_id', $row, $token,
+        ['Prefer: resolution=merge-duplicates,return=minimal']);
+    if ($res['error']) return $res['error'];
+
+    audit_log($token, 'kyc_submitted', 'kyc', $userId, 'Submitted KYC for review');
+    notify($token, 'New KYC submission', ($data['legal_name'] ?? 'A user') . ' submitted identity documents for review.', null, 'admin');
+    return null;
+}
+
+function review_kyc(string $token, string $userId, string $adminId, bool $approve, string $note = ''): ?string
+{
+    $status = $approve ? 'approved' : 'rejected';
+    $res = supabase_request('PATCH', '/rest/v1/kyc_submissions?user_id=eq.' . urlencode($userId), [
+        'status'      => $status,
+        'note'        => $note !== '' ? $note : null,
+        'reviewed_by' => $adminId,
+        'reviewed_at' => date('c'),
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return $res['error'];
+
+    audit_log($token, 'kyc_' . $status, 'kyc', $userId, 'KYC ' . $status . ($note !== '' ? ' — ' . $note : ''));
+    notify($token,
+        $approve ? 'Identity verified' : 'Identity check not approved',
+        $approve
+            ? 'Your documents checked out. Your account is now verified.'
+            : trim('We could not verify your documents. ' . $note) . ' You can submit again.',
+        $userId);
     return null;
 }
 

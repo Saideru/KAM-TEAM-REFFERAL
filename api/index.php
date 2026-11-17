@@ -163,7 +163,6 @@ $csrf = csrf_token();
         <form method="post" action="/index.php" novalidate>
           <input type="hidden" name="action" value="register">
           <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
-          <input type="hidden" name="ref" value="<?= e($ref) ?>">
 
           <div class="field">
             <label>Account tier</label>
@@ -195,6 +194,12 @@ $csrf = csrf_token();
           <div class="row">
             <div class="field"><label for="reg-password">Password</label><div class="pw-wrap"><input id="reg-password" name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Min 8 chars"><button type="button" class="pw-toggle">Show</button></div></div>
             <div class="field"><label for="reg-password2">Confirm</label><input id="reg-password2" name="password_confirm" type="password" autocomplete="new-password" minlength="8" required placeholder="••••••••"></div>
+          </div>
+
+          <div class="field">
+            <label for="reg-ref">Referral code <span style="opacity:.6">(optional)</span></label>
+            <input id="reg-ref" name="ref" type="text" maxlength="12" style="text-transform:uppercase" value="<?= e($ref) ?>" placeholder="KT-XXXXXX">
+            <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Were you invited? Enter their code so they get credited.</small>
           </div>
 
           <label class="terms"><input type="checkbox" name="terms" value="1" required>          <span>I agree to the KAM Team program terms and authorize account communication.</span></label>

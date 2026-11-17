@@ -43,6 +43,7 @@ $serviceMeta = [
   <div class="topbar-inner">
     <?= kam_lockup() ?>
     <div style="display:flex;align-items:center;gap:10px">
+      <?= notif_bell($token, $profile, $csrf) ?>
       <span class="role-label client_basic">Basic</span>
       <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
     </div>
@@ -54,6 +55,7 @@ $serviceMeta = [
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent">Basic tier active.</span></h1>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
+  <?= kyc_banner($profile) ?>
 
   <?= lifecycle_countdown($profile, 'Account active for // 3-month window') ?>
 
