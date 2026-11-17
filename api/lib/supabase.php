@@ -1,7 +1,7 @@
 <?php
 // KAMTEAM // Supabase client — serverless-compatible (cookie sessions for Vercel)
 
-require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/config.php';
 
 // =====================================================================
 // Cookie-based session (replaces $_SESSION for serverless/Vercel)
