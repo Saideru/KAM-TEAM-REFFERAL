@@ -157,7 +157,8 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         'business_nature'    => $meta['business_nature'] ?? null,
         'business_struggles' => array_values($meta['business_struggles'] ?? []),
         'business_notes'     => $meta['business_notes'] ?? null,
-        // assigned_admin is filled by the roulette trigger in the database
+        // assigned_admin stays null until an admin approves the application,
+        // so rejected sign-ups don't consume a roulette turn.
     ], null, ['Prefer: return=representation']);
 
     if ($res['error']) {
@@ -509,8 +510,14 @@ function approve_application(string $token, string $userId): ?string
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
 
-    audit_log($token, 'approve_application', 'profile', $userId, 'Approved ' . role_name($p['role']) . ' application');
-    notify($token, 'Application approved', 'Welcome aboard — your ' . role_name($p['role']) . ' account is active.', $userId);
+    // Roulette: every new account takes one turn and keeps that admin for good.
+    $owner = roulette_claim_account($token, $userId);
+
+    audit_log($token, 'approve_application', 'profile', $userId,
+        'Approved ' . role_name($p['role']) . ' application' . ($owner ? ' → roulette: ' . $owner['full_name'] : ''));
+    notify($token, 'Application approved',
+        'Welcome aboard — your ' . role_name($p['role']) . ' account is active.'
+        . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $userId);
     return null;
 }
 
@@ -604,25 +611,57 @@ function business_card(string $token, array $profile, string $csrf): string
 // Roulette — round-robin assignment of approved packages to admins
 // =====================================================================
 
-// Takes the next turn and hands this package (and the account) to that admin.
-// Returns the admin's profile, or null when nobody is in the rotation.
-function roulette_assign(string $token, string $txnId, string $userId): ?array
+// Advances the rotation one slot and returns whose turn it was.
+function roulette_take_turn(string $token): ?string
 {
-    $turn    = supabase_request('POST', '/rest/v1/rpc/roulette_next', [], $token);
-    $adminId = is_string($turn['body']) ? $turn['body'] : null;
-    if (!$adminId) return null;
+    $turn = supabase_request('POST', '/rest/v1/rpc/roulette_next', [], $token);
+    return is_string($turn['body']) ? $turn['body'] : null;
+}
 
-    supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($txnId), ['assigned_admin' => $adminId], $token, ['Prefer: return=minimal']);
-    supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), ['assigned_admin' => $adminId], $token, ['Prefer: return=minimal']);
+// Gives a newly approved account its permanent admin. One account costs one
+// turn: the admin claimed here also receives every package that account buys
+// later, so buying a plan never moves it to someone else.
+// Returns the admin's profile, or null when nobody is in the rotation.
+function roulette_claim_account(string $token, string $userId): ?array
+{
+    $user = supabase_request('GET', '/rest/v1/profiles?select=full_name,role,assigned_admin,business_nature,business_struggles&id=eq.' . urlencode($userId), null, $token)['body'][0] ?? null;
+    if (!$user) return null;
+
+    // Already owned — don't burn another turn on the same account.
+    $adminId = $user['assigned_admin'] ?? null;
+    $isNew   = $adminId === null;
+    if ($isNew) {
+        $adminId = roulette_take_turn($token);
+        if (!$adminId) return null;
+        supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), ['assigned_admin' => $adminId], $token, ['Prefer: return=minimal']);
+    }
 
     $admin = supabase_request('GET', '/rest/v1/profiles?select=id,full_name&id=eq.' . urlencode($adminId), null, $token)['body'][0] ?? null;
-    $user  = supabase_request('GET', '/rest/v1/profiles?select=full_name,business_nature,business_struggles&id=eq.' . urlencode($userId), null, $token)['body'][0] ?? [];
-    $pkg   = supabase_request('GET', '/rest/v1/transactions?select=amount,packages!transactions_package_id_fkey(name)&id=eq.' . urlencode($txnId), null, $token)['body'][0] ?? [];
-    notify($token, 'Roulette: a package was assigned to you',
-        ($user['full_name'] ?? 'A client') . ' — ' . ($pkg['packages']['name'] ?? 'plan')
-        . (!empty($user['business_nature']) ? ' · ' . $user['business_nature'] : '')
-        . (!empty($user['business_struggles']) ? '. Needs help with: ' . implode(', ', array_map('struggle_label', $user['business_struggles'])) : '') . '.',
-        $adminId, 'all', '/dashboard-admin.php?mine=1#roulette');
+    if ($isNew) {
+        notify($token, 'Roulette: a new account is yours',
+            ($user['full_name'] ?? 'A new account') . ' (' . role_name($user['role'] ?? 'referral') . ') was added to your list'
+            . (!empty($user['business_nature']) ? ' · ' . $user['business_nature'] : '')
+            . (!empty($user['business_struggles']) ? '. Needs help with: ' . implode(', ', array_map('struggle_label', $user['business_struggles'])) : '') . '.',
+            $adminId, 'all', '/dashboard-admin.php?mine=1#roulette');
+    }
+    return $admin;
+}
+
+// Tags an approved package with its account's admin. Falls back to claiming
+// the account when it somehow has no owner yet (e.g. approved before the
+// roulette existed), so a package is never left unassigned.
+function roulette_assign(string $token, string $txnId, string $userId): ?array
+{
+    $admin = roulette_claim_account($token, $userId);
+    if (!$admin) return null;
+
+    supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($txnId), ['assigned_admin' => $admin['id']], $token, ['Prefer: return=minimal']);
+
+    $user = supabase_request('GET', '/rest/v1/profiles?select=full_name&id=eq.' . urlencode($userId), null, $token)['body'][0] ?? [];
+    $pkg  = supabase_request('GET', '/rest/v1/transactions?select=amount,packages!transactions_package_id_fkey(name)&id=eq.' . urlencode($txnId), null, $token)['body'][0] ?? [];
+    notify($token, 'Roulette: your client bought a package',
+        ($user['full_name'] ?? 'A client') . ' activated ' . ($pkg['packages']['name'] ?? 'a plan') . '.',
+        $admin['id'], 'all', '/dashboard-admin.php?mine=1#roulette');
     return $admin;
 }
 

@@ -410,6 +410,9 @@ $assigned  = array_values(array_filter($allTxns, fn($t) => $t['type'] === 'activ
 $onlyMine  = !empty($_GET['mine']);
 $assignedShown = $onlyMine ? array_values(array_filter($assigned, fn($t) => $t['assigned_admin'] === $adminId)) : $assigned;
 $perAdmin  = array_count_values(array_column($assigned, 'assigned_admin'));
+// The rotation hands out accounts, so the per-admin tally counts accounts.
+$ownedAccounts = array_values(array_filter($allProfiles, fn($p) => !empty($p['assigned_admin']) && empty($p['deleted_at'])));
+$perAdminAcct  = array_count_values(array_column($ownedAccounts, 'assigned_admin'));
 
 $chRes      = supabase_request('GET', '/rest/v1/package_changes?select=*,packages(name)&order=created_at.desc&limit=30', null, $token);
 $allChanges = is_array($chRes['body']) && !$chRes['error'] ? $chRes['body'] : [];
@@ -846,14 +849,14 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- ROULETTE -->
   <div id="panel-roulette" class="admin-panel">
     <div class="card" style="margin-bottom:12px"><h2>Roulette rotation</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every Basic or Standard plan you approve is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped.</p>
-      <?php if (!$roulette['members']): ?><p class="empty">Nobody is in the rotation — approved plans won't be assigned. Add an admin below.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every account you approve — Referral or Client — is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped. An account keeps its admin for good, so any package it buys later goes to the same person instead of taking a new turn.</p>
+      <?php if (!$roulette['members']): ?><p class="empty">Nobody is in the rotation — approved accounts won't be assigned. Add an admin below.</p>
       <?php else: ?>
       <ol class="roulette">
         <?php $n = count($roulette['members']); foreach ($roulette['members'] as $k => $m): $isNext = $m['admin_id'] === $roulette['next']; ?>
           <li class="roulette-slot<?= $isNext ? ' is-next' : '' ?><?= $m['active'] ? '' : ' is-paused' ?>">
             <span class="roulette-num"><?= $k + 1 ?></span>
-            <span class="roulette-name"><strong><?= e($m['admin']['full_name'] ?? '—') ?></strong><small><?= (int) ($perAdmin[$m['admin_id']] ?? 0) ?> package<?= ($perAdmin[$m['admin_id']] ?? 0) == 1 ? '' : 's' ?> assigned<?= $m['active'] ? '' : ' · paused' ?></small></span>
+            <span class="roulette-name"><strong><?= e($m['admin']['full_name'] ?? '—') ?></strong><small><?= (int) ($perAdminAcct[$m['admin_id']] ?? 0) ?> account<?= ($perAdminAcct[$m['admin_id']] ?? 0) == 1 ? '' : 's' ?> · <?= (int) ($perAdmin[$m['admin_id']] ?? 0) ?> package<?= ($perAdmin[$m['admin_id']] ?? 0) == 1 ? '' : 's' ?><?= $m['active'] ? '' : ' · paused' ?></small></span>
             <?php if ($isNext): ?><span class="pill pending">next up</span><?php endif; ?>
             <span class="roulette-actions">
               <?php foreach ([['roulette_up', '↑', $k > 0], ['roulette_down', '↓', $k < $n - 1], ['roulette_toggle', $m['active'] ? 'Pause' : 'Resume', true], ['roulette_remove', 'Remove', true]] as [$a, $lbl, $show]): if (!$show) continue; ?>
