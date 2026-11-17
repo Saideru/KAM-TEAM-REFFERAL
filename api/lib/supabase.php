@@ -116,13 +116,14 @@ function supabase_request(string $method, string $path, ?array $body = null, ?st
 
 // Creates a profile row with a bcrypt password hash.
 // Returns ['error' => string|null, 'profile' => array|null].
-function supabase_sign_up(string $email, string $password, array $meta): array
+function supabase_sign_up(string $username, string $password, array $meta): array
 {
-    $email = strtolower(trim($email));
+    $username = strtolower(trim($username));
+    $email    = strtolower(trim($meta['email'] ?? ''));
 
-    $exists = supabase_request('GET', '/rest/v1/profiles?select=id&email=eq.' . urlencode($email));
+    $exists = supabase_request('GET', '/rest/v1/profiles?select=id&username=eq.' . urlencode($username));
     if (!empty($exists['body'])) {
-        return ['error' => 'An account with that email already exists.', 'profile' => null];
+        return ['error' => 'That username is already taken.', 'profile' => null];
     }
 
     $referrer = null;
@@ -135,8 +136,9 @@ function supabase_sign_up(string $email, string $password, array $meta): array
         ? $meta['role'] : 'referral';
 
     $res = supabase_request('POST', '/rest/v1/profiles', [
-        'full_name'     => $meta['full_name'] ?? explode('@', $email)[0],
-        'email'         => $email,
+        'full_name'     => $meta['full_name'] ?: $username,
+        'username'      => $username,
+        'email'         => $email ?: null,
         'password_hash' => password_hash($password, PASSWORD_BCRYPT),
         'phone'         => $meta['phone']   ?: null,
         'company'       => $meta['company'] ?: null,
@@ -153,10 +155,10 @@ function supabase_sign_up(string $email, string $password, array $meta): array
 
 // Verifies the password against the stored bcrypt hash.
 // Returns ['error' => string|null, 'profile' => array|null].
-function supabase_sign_in(string $email, string $password): array
+function supabase_sign_in(string $username, string $password): array
 {
-    $email = strtolower(trim($email));
-    $res   = supabase_request('GET', '/rest/v1/profiles?select=*&email=eq.' . urlencode($email));
+    $username = strtolower(trim($username));
+    $res      = supabase_request('GET', '/rest/v1/profiles?select=*&username=eq.' . urlencode($username));
 
     if ($res['error']) {
         return ['error' => 'Could not reach the database.', 'profile' => null];
@@ -177,8 +179,8 @@ function supabase_store_session(array $profile): void
 {
     $session = &_session();
     $session['sb'] = [
-        'user_id' => $profile['id'],
-        'email'   => $profile['email'],
+        'user_id'  => $profile['id'],
+        'username' => $profile['username'],
     ];
     _save_session();
 }

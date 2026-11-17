@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 $profilesRes = supabase_request('GET', '/rest/v1/profiles?select=*&order=created_at.desc', null, $token);
 $allProfiles = is_array($profilesRes['body']) && !$profilesRes['error'] ? $profilesRes['body'] : [];
 
-$refRes  = supabase_request('GET', '/rest/v1/referrals?select=*,referrer:profiles!referrals_referrer_id_fkey(full_name,email),referred:profiles!referrals_referred_id_fkey(full_name,email)&order=created_at.desc', null, $token);
+$refRes  = supabase_request('GET', '/rest/v1/referrals?select=*,referrer:profiles!referrals_referrer_id_fkey(full_name,username),referred:profiles!referrals_referred_id_fkey(full_name,username)&order=created_at.desc', null, $token);
 $allRefs = is_array($refRes['body']) && !$refRes['error'] ? $refRes['body'] : [];
 
 $pkgRes  = supabase_request('GET', '/rest/v1/packages?select=*&order=created_at.desc', null, $token);
@@ -195,12 +195,12 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <div id="panel-users" class="admin-panel active">
     <div class="card"><h2>All users</h2>
       <div class="table-scroll"><table>
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Lifecycle</th><th>Code</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Lifecycle</th><th>Code</th><th>Actions</th></tr></thead>
         <tbody>
         <?php foreach ($allProfiles as $p): $deleted = !empty($p['deleted_at']); ?>
           <tr style="<?= $deleted ? 'opacity:.5' : '' ?>">
             <td><strong><?= e($p['full_name']) ?></strong><?= $deleted ? ' <span style="color:var(--red)">[DEL]</span>' : '' ?></td>
-            <td style="font-size:12px"><?= e($p['email']) ?></td>
+            <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
             <td><span class="role-badge <?= e($p['role']) ?>"><?= e(str_replace('_', ' ', $p['role'])) ?></span></td>
             <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span></td>
             <td style="font-size:12px"><?= $p['lifecycle_expires_at'] ? date('M j, Y', strtotime($p['lifecycle_expires_at'])) : '—' ?></td>
@@ -229,8 +229,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <thead><tr><th>Referrer</th><th>Referred</th><th>Level</th><th>Status</th><th>Created</th></tr></thead>
         <tbody><?php foreach ($allRefs as $r): ?>
           <tr>
-            <td><strong><?= e($r['referrer']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referrer']['email'] ?? '') ?></span></td>
-            <td><strong><?= e($r['referred']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referred']['email'] ?? '') ?></span></td>
+            <td><strong><?= e($r['referrer']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referrer']['username'] ?? '') ?></span></td>
+            <td><strong><?= e($r['referred']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referred']['username'] ?? '') ?></span></td>
             <td>L<?= e((string) $r['level']) ?></td>
             <td><span class="pill <?= e($r['status']) ?>"><?= e($r['status']) ?></span></td>
             <td style="font-size:12px"><?= date('M j, Y', strtotime($r['created_at'])) ?></td>

@@ -9,32 +9,29 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral'];
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral'];
 $notice = flash();
 
 if ($ref !== '' && !isset($_GET['mode'])) {
     $mode = 'register';
 }
-if (isset($_GET['confirmed'])) {
-    $notice = ['type' => 'success', 'message' => 'Email confirmed. Sign in to access your account.'];
-}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
-    $mode   = $action === 'register' ? 'register' : 'login';
-    $email  = trim((string) ($_POST['email'] ?? ''));
-    $pass   = (string) ($_POST['password'] ?? '');
-    $old['email'] = $email;
+    $action   = $_POST['action'] ?? '';
+    $mode     = $action === 'register' ? 'register' : 'login';
+    $username = strtolower(trim((string) ($_POST['username'] ?? '')));
+    $pass     = (string) ($_POST['password'] ?? '');
+    $old['username'] = $username;
 
     if (!supabase_configured()) {
         $errors[] = 'System not configured. Set Supabase env vars.';
     } elseif (!csrf_check()) {
         $errors[] = 'Session expired. Please try again.';
     } elseif ($action === 'login') {
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $pass === '') {
+        if ($username === '' || $pass === '') {
             $errors[] = 'Invalid credentials.';
         } else {
-            $res = supabase_sign_in($email, $pass);
+            $res = supabase_sign_in($username, $pass);
             if ($res['error']) {
                 $errors[] = 'Invalid credentials.';
             } else {
@@ -45,20 +42,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'register') {
         $old['full_name'] = trim((string) ($_POST['full_name'] ?? ''));
+        $old['email']     = trim((string) ($_POST['email'] ?? ''));
         $old['phone']     = trim((string) ($_POST['phone'] ?? ''));
         $old['company']   = trim((string) ($_POST['company'] ?? ''));
         $old['role']      = in_array($_POST['role'] ?? '', ['client_basic', 'client_standard', 'referral'], true) ? $_POST['role'] : 'referral';
         $confirm          = (string) ($_POST['password_confirm'] ?? '');
 
-        if ($old['full_name'] === '')                   $errors[] = 'Enter your full name.';
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid email address.';
-        if (strlen($pass) < 8)                          $errors[] = 'Password must be at least 8 characters.';
-        if ($pass !== $confirm)                         $errors[] = 'Passwords do not match.';
-        if (empty($_POST['terms']))                     $errors[] = 'Accept program terms to continue.';
+        if ($old['full_name'] === '')                     $errors[] = 'Enter your full name.';
+        if (!preg_match('/^[a-z0-9_]{3,20}$/', $username)) $errors[] = 'Username must be 3-20 characters: letters, numbers or underscore.';
+        if ($old['email'] !== '' && !filter_var($old['email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid email address.';
+        if (strlen($pass) < 8)                            $errors[] = 'Password must be at least 8 characters.';
+        if ($pass !== $confirm)                           $errors[] = 'Passwords do not match.';
+        if (empty($_POST['terms']))                       $errors[] = 'Accept program terms to continue.';
 
         if (!$errors) {
-            $res = supabase_sign_up($email, $pass, [
+            $res = supabase_sign_up($username, $pass, [
                 'full_name' => $old['full_name'],
+                'email'     => $old['email'],
                 'phone'     => $old['phone'],
                 'company'   => $old['company'],
                 'ref'       => $ref,
@@ -136,8 +136,8 @@ $csrf = csrf_token();
           <input type="hidden" name="action" value="login">
           <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
           <div class="field">
-            <label for="login-email">Email</label>
-            <input id="login-email" name="email" type="email" autocomplete="email" required value="<?= e($mode === 'login' ? $old['email'] : '') ?>" placeholder="you@example.com">
+            <label for="login-username">Username</label>
+            <input id="login-username" name="username" type="text" autocomplete="username" required value="<?= e($mode === 'login' ? $old['username'] : '') ?>" placeholder="yourname">
           </div>
           <div class="field">
             <label for="login-password">Password</label>
@@ -186,7 +186,8 @@ $csrf = csrf_token();
           </div>
 
           <div class="field"><label for="reg-name">Full name</label><input id="reg-name" name="full_name" type="text" autocomplete="name" required value="<?= e($old['full_name']) ?>" placeholder="John Doe"></div>
-          <div class="field"><label for="reg-email">Email</label>          <input id="reg-email" name="email" type="email" autocomplete="email" required value="<?= e($mode === 'register' ? $old['email'] : '') ?>" placeholder="you@example.com"></div>
+          <div class="field"><label for="reg-username">Username</label><input id="reg-username" name="username" type="text" autocomplete="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($mode === 'register' ? $old['username'] : '') ?>" placeholder="3-20 letters, numbers or _"></div>
+          <div class="field"><label for="reg-email">Email <span style="opacity:.6">(optional)</span></label><input id="reg-email" name="email" type="email" autocomplete="email" value="<?= e($old['email']) ?>" placeholder="you@example.com"></div>
           <div class="row">
             <div class="field"><label for="reg-phone">Phone</label><input id="reg-phone" name="phone" type="tel" autocomplete="tel" value="<?= e($old['phone']) ?>"></div>
             <div class="field"><label for="reg-company">Company</label><input id="reg-company" name="company" type="text" autocomplete="organization" value="<?= e($old['company']) ?>"></div>

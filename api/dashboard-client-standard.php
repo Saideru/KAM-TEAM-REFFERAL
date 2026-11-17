@@ -11,7 +11,7 @@ $csrf   = csrf_token();
 $svcRes   = supabase_request('GET', '/rest/v1/client_services?select=*&client_id=eq.' . urlencode($userId) . '&order=started_at.desc', null, $token);
 $services = is_array($svcRes['body']) && !$svcRes['error'] ? $svcRes['body'] : [];
 
-$refRes    = supabase_request('GET', '/rest/v1/referrals?select=*,referred:profiles!referrals_referred_id_fkey(full_name,email,role)&referrer_id=eq.' . urlencode($userId) . '&order=created_at.desc', null, $token);
+$refRes    = supabase_request('GET', '/rest/v1/referrals?select=*,referred:profiles!referrals_referred_id_fkey(full_name,username,role)&referrer_id=eq.' . urlencode($userId) . '&order=created_at.desc', null, $token);
 $referrals = is_array($refRes['body']) && !$refRes['error'] ? $refRes['body'] : [];
 
 $txnRes = supabase_request('GET', '/rest/v1/transactions?select=*,packages(name)&user_id=eq.' . urlencode($userId) . '&order=created_at.desc', null, $token);
@@ -91,7 +91,7 @@ $serviceMeta = [
           <thead><tr><th>Name</th><th>Tier</th><th>Status</th><th>Joined</th></tr></thead>
           <tbody><?php foreach ($referrals as $r): ?>
             <tr>
-              <td><strong><?= e($r['referred']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referred']['email'] ?? '') ?></span></td>
+              <td><strong><?= e($r['referred']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referred']['username'] ?? '') ?></span></td>
               <td><span class="role-badge <?= e($r['referred']['role'] ?? 'referral') ?>"><?= e(str_replace('_', ' ', $r['referred']['role'] ?? '')) ?></span></td>
               <td><span class="pill <?= e($r['status']) ?>"><?= e($r['status']) ?></span></td>
               <td style="font-size:12px"><?= date('M j, Y', strtotime($r['created_at'])) ?></td>
@@ -138,7 +138,8 @@ $serviceMeta = [
         <h2>Account</h2>
         <div class="profile-info">
           <div class="profile-row"><span class="label">Name</span><span><?= e($profile['full_name'] ?? '') ?></span></div>
-          <div class="profile-row"><span class="label">Email</span><span><?= e($profile['email'] ?? '') ?></span></div>
+          <div class="profile-row"><span class="label">Username</span><span><?= e($profile['username'] ?? '') ?></span></div>
+          <div class="profile-row"><span class="label">Email</span><span><?= e($profile['email'] ?? '—') ?></span></div>
           <div class="profile-row"><span class="label">Phone</span><span><?= e($profile['phone'] ?? '—') ?></span></div>
           <div class="profile-row"><span class="label">Company</span><span><?= e($profile['company'] ?? '—') ?></span></div>
           <div class="profile-row"><span class="label">Code</span><span style="color:var(--rust)"><?= e($profile['referral_code'] ?? '') ?></span></div>

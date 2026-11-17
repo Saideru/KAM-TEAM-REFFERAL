@@ -99,7 +99,8 @@ $serviceMeta = [
       <h2>Your account</h2>
       <div class="profile-info">
         <div class="profile-row"><span class="label">Name</span><span><?= e($profile['full_name'] ?? '') ?></span></div>
-        <div class="profile-row"><span class="label">Email</span><span><?= e($profile['email'] ?? '') ?></span></div>
+        <div class="profile-row"><span class="label">Username</span><span><?= e($profile['username'] ?? '') ?></span></div>
+        <div class="profile-row"><span class="label">Email</span><span><?= e($profile['email'] ?? '—') ?></span></div>
         <div class="profile-row"><span class="label">Phone</span><span><?= e($profile['phone'] ?? '—') ?></span></div>
         <div class="profile-row"><span class="label">Company</span><span><?= e($profile['company'] ?? '—') ?></span></div>
         <div class="profile-row"><span class="label">Code</span><span style="color:var(--cyan)"><?= e($profile['referral_code'] ?? '') ?></span></div>

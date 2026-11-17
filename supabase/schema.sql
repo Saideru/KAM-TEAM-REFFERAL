@@ -21,7 +21,8 @@ drop table if exists public.profiles cascade;
 create table public.profiles (
   id                  uuid primary key default gen_random_uuid(),
   full_name           text not null,
-  email               text not null unique,
+  username            text not null unique,
+  email               text unique,
   password_hash       text not null,
   phone               text,
   company             text,
@@ -37,6 +38,7 @@ create table public.profiles (
   deleted_at          timestamptz
 );
 
+create index profiles_username_idx on public.profiles (username);
 create index profiles_role_idx on public.profiles (role);
 create index profiles_status_idx on public.profiles (status);
 create index profiles_referral_code_idx on public.profiles (referral_code);
@@ -240,15 +242,17 @@ insert into public.packages (name, description, price, commission_outright, comm
   ('AI Implementation','AI workflow automation package',       299.00, 60.00, 12.00,'standard');
 
 -- ---------------------------------------------------------------------
--- 10 // ADMIN ACCOUNTS — Michael, Azi, Siedel (password: Numbers20:20)
--- bcrypt hashes, verified in PHP with password_verify()
+-- 10 // ADMIN ACCOUNTS
+--   username: michael | azi | siedel
+--   password: Numbers20:20
+-- bcrypt cost 10 to match PHP's password_hash() default.
 -- ---------------------------------------------------------------------
-insert into public.profiles (full_name, email, password_hash, role, status)
+insert into public.profiles (full_name, username, email, password_hash, role, status)
 values
-  ('Michael', 'michael@kam-team.com', extensions.crypt('Numbers20:20', extensions.gen_salt('bf')), 'admin', 'accepted'),
-  ('Azi',     'azi@kam-team.com',     extensions.crypt('Numbers20:20', extensions.gen_salt('bf')), 'admin', 'accepted'),
-  ('Siedel',  'siedel@kam-team.com',  extensions.crypt('Numbers20:20', extensions.gen_salt('bf')), 'admin', 'accepted')
-on conflict (email) do update
+  ('Michael', 'michael', 'michael@kam-team.com', extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted'),
+  ('Azi',     'azi',     'azi@kam-team.com',     extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted'),
+  ('Siedel',  'siedel',  'siedel@kam-team.com',  extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted')
+on conflict (username) do update
 set password_hash = excluded.password_hash,
     role          = 'admin',
     status        = 'accepted',
