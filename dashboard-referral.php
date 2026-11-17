@@ -83,7 +83,7 @@ $totalRefs = count($referrals);
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Choose Your Path // KAMTEAM</title>
+  <title>Choose Your Path // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%23ffcc00'>R</text></svg>">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
@@ -154,7 +154,7 @@ $totalRefs = count($referrals);
           <form method="post">
             <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
             <input type="hidden" name="action" value="activate_standard">
-            <button class="btn btn-solid" type="submit" style="background:var(--orange);border-color:var(--orange);color:var(--bg)">Pay $100 &amp; Activate →</button>
+            <button class="btn btn-solid" type="submit" style="background:var(--orange);border-color:var(--orange);color:#1A1917">Pay $100 &amp; Activate →</button>
           </form>
         </div>
       </div>

@@ -153,7 +153,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin // KAMTEAM Portal</title>
+  <title>Admin // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>A</text></svg>">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -170,7 +170,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
 <main class="wrap">
   <span class="label"><span class="dot"></span>Mission control // <?= e($profile['full_name'] ?? '') ?></span>
-  <h1>Admin terminal. <span class="accent">Full oversight.</span></h1>
+  <h1>Admin dashboard. <span class="accent">Manage the program.</span></h1>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>

@@ -16,7 +16,7 @@ if ($ref !== '' && !isset($_GET['mode'])) {
     $mode = 'register';
 }
 if (isset($_GET['confirmed'])) {
-    $notice = ['type' => 'success', 'message' => 'Email confirmed. Sign in to access your terminal.'];
+    $notice = ['type' => 'success', 'message' => 'Email confirmed. Sign in to access your account.'];
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -89,8 +89,8 @@ $csrf = csrf_token();
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KAMTEAM // Network Marketing Portal</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>K</text></svg>">
+  <title>KAM Team // Referral Program</title>
+  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
@@ -98,23 +98,23 @@ $csrf = csrf_token();
 
   <section class="auth-brand">
     <div class="scan-line"></div>
-    <div><?= kam_lockup() ?></div>
+    <div><?= kam_lockup('reversed') ?></div>
 
     <div>
-      <span class="label"><span class="dot"></span>Network Marketing // Portal v3.0</span>
-      <h1>Build your network. <span class="accent">Get rewarded.</span></h1>
-      <p class="lead">Join the KAMTEAM referral ecosystem. Earn commissions through direct referrals and unilevel structures. Track everything in real-time.</p>
+      <span class="label"><span class="dot"></span>KAM TEAM // REFERRAL PROGRAM</span>
+      <h1>Solve business problems with the power of <span class="accent">people + AI.</span></h1>
+      <p class="lead">Join the KAM Team referral program. Build your network, track referrals and manage commissions in one place.</p>
 
       <ol class="steps">
-        <li><span class="label" style="color:var(--cyan)">01 //</span><span>Register and choose your tier — <strong style="color:var(--green)">Basic</strong> or <strong style="color:var(--orange)">Standard</strong>.</span></li>
-        <li><span class="label" style="color:var(--cyan)">02 //</span><span>Build your referral network. Standard unlocks <strong>unilevel commissions</strong>.</span></li>
-        <li><span class="label" style="color:var(--cyan)">03 //</span><span>Track commissions, lifecycle, and payouts from your dashboard.</span></li>
+        <li><span class="label" style="color:var(--orange)">01 //</span><span>Register and choose your tier — <strong style="color:var(--white)">Basic</strong> or <strong style="color:var(--orange)">Standard</strong>.</span></li>
+        <li><span class="label" style="color:var(--orange)">02 //</span><span>Build your referral network. Standard unlocks unilevel commissions.</span></li>
+        <li><span class="label" style="color:var(--orange)">03 //</span><span>Track commissions, lifecycle and payouts from your dashboard.</span></li>
       </ol>
     </div>
 
     <div class="stats">
       <div class="stat"><strong>4+</strong><span class="label">Years active</span></div>
-      <div class="stat"><strong>50+</strong><span class="label">Operators</span></div>
+      <div class="stat"><strong>50+</strong><span class="label">Professionals</span></div>
       <div class="stat"><strong>7</strong><span class="label">Services</span></div>
     </div>
   </section>
@@ -128,7 +128,7 @@ $csrf = csrf_token();
       </div>
 
       <?php if (!supabase_configured()): ?>
-        <div class="alert alert-warn">[ SYSTEM ] Configure Supabase environment variables</div>
+        <div class="alert alert-warn">Configuration needed: add Supabase environment variables.</div>
       <?php endif; ?>
 
       <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
@@ -137,14 +137,14 @@ $csrf = csrf_token();
       <div id="panel-login" role="tabpanel" <?= $mode === 'login' ? '' : 'hidden' ?>>
         <span class="label kicker">01 // Authentication</span>
         <h2>Welcome back.</h2>
-        <p class="sub">Access your terminal.</p>
+        <p class="sub">Sign in to your account.</p>
 
         <form method="post" action="/index.php" novalidate>
           <input type="hidden" name="action" value="login">
           <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
           <div class="field">
             <label for="login-email">Email</label>
-            <input id="login-email" name="email" type="email" autocomplete="email" required value="<?= e($mode === 'login' ? $old['email'] : '') ?>" placeholder="operator@kamteam.com">
+            <input id="login-email" name="email" type="email" autocomplete="email" required value="<?= e($mode === 'login' ? $old['email'] : '') ?>" placeholder="you@example.com">
           </div>
           <div class="field">
             <label for="login-password">Password</label>
@@ -153,15 +153,15 @@ $csrf = csrf_token();
               <button type="button" class="pw-toggle" aria-label="Show password">Show</button>
             </div>
           </div>
-          <button class="btn btn-solid" type="submit">Authenticate <span aria-hidden="true">→</span></button>
+          <button class="btn btn-solid" type="submit">Sign in <span aria-hidden="true">→</span></button>
         </form>
-        <p class="switch">New operator? <button type="button" data-mode="register">Create account</button></p>
+        <p class="switch">New to KAM Team? <button type="button" data-mode="register">Create account</button></p>
       </div>
 
       <div id="panel-register" role="tabpanel" <?= $mode === 'register' ? '' : 'hidden' ?>>
         <span class="label kicker">02 // Registration</span>
-        <h2>Join KAMTEAM.</h2>
-        <p class="sub">Select your account tier and initialize.</p>
+        <h2>Join KAM Team.</h2>
+        <p class="sub">Choose your account type to get started.</p>
 
         <?php if ($ref !== ''): ?>
           <div class="ref-badge"><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
@@ -187,13 +187,13 @@ $csrf = csrf_token();
                 <span class="role-icon">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
                 </span>
-                <span class="role-info"><strong>Client</strong><small>Track your KAMTEAM services</small></span>
+                <span class="role-info"><strong>Client</strong><small>Track your KAM Team services</small></span>
               </label>
             </div>
           </div>
 
           <div class="field"><label for="reg-name">Full name</label><input id="reg-name" name="full_name" type="text" autocomplete="name" required value="<?= e($old['full_name']) ?>" placeholder="John Doe"></div>
-          <div class="field"><label for="reg-email">Email</label><input id="reg-email" name="email" type="email" autocomplete="email" required value="<?= e($mode === 'register' ? $old['email'] : '') ?>" placeholder="operator@kamteam.com"></div>
+          <div class="field"><label for="reg-email">Email</label>          <input id="reg-email" name="email" type="email" autocomplete="email" required value="<?= e($mode === 'register' ? $old['email'] : '') ?>" placeholder="you@example.com"></div>
           <div class="row">
             <div class="field"><label for="reg-phone">Phone</label><input id="reg-phone" name="phone" type="tel" autocomplete="tel" value="<?= e($old['phone']) ?>"></div>
             <div class="field"><label for="reg-company">Company</label><input id="reg-company" name="company" type="text" autocomplete="organization" value="<?= e($old['company']) ?>"></div>
@@ -203,13 +203,13 @@ $csrf = csrf_token();
             <div class="field"><label for="reg-password2">Confirm</label><input id="reg-password2" name="password_confirm" type="password" autocomplete="new-password" minlength="8" required placeholder="••••••••"></div>
           </div>
 
-          <label class="terms"><input type="checkbox" name="terms" value="1" required><span>I agree to KAMTEAM program terms and authorize account communication.</span></label>
-          <button class="btn btn-solid" type="submit">Initialize account <span aria-hidden="true">→</span></button>
+          <label class="terms"><input type="checkbox" name="terms" value="1" required>          <span>I agree to the KAM Team program terms and authorize account communication.</span></label>
+          <button class="btn btn-solid" type="submit">Create account <span aria-hidden="true">→</span></button>
         </form>
         <p class="switch">Already registered? <button type="button" data-mode="login">Sign in</button></p>
       </div>
 
-      <p class="foot">KAMTEAM // Network Marketing // Secure Portal</p>
+      <p class="foot">KAM TEAM // REFERRAL PROGRAM</p>
     </div>
   </section>
 </main>

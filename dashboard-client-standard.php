@@ -40,7 +40,7 @@ $serviceMeta = [
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Standard Client // KAMTEAM</title>
+  <title>Standard Client // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%23F2651F'>S</text></svg>">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
@@ -60,7 +60,7 @@ $serviceMeta = [
 
 <main class="wrap">
   <span class="label"><span class="dot" style="background:var(--orange)"></span>Standard client // <?= e($profile['referral_code'] ?? '') ?></span>
-  <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--orange)">Standard tier — full access.</span></h1>
+  <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--rust)">Standard tier — full access.</span></h1>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
 
@@ -68,7 +68,7 @@ $serviceMeta = [
   <div class="card" style="margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <span class="label">Lifecycle // 27 months base + 3 per referral</span>
-      <span style="font-size:12px;color:var(--orange)">+3 months per new referral</span>
+      <span style="font-size:12px;color:var(--rust)">+3 months per new referral</span>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin:8px 0 6px">
       <span style="font-size:13px;color:var(--<?= $lifecycle['class'] === 'ok' ? 'green' : ($lifecycle['class'] === 'warn' ? 'yellow' : 'red') ?>)"><?= e($lifecycle['text']) ?></span>
@@ -176,7 +176,7 @@ $serviceMeta = [
           <div class="profile-row"><span class="label">Email</span><span><?= e($profile['email'] ?? '') ?></span></div>
           <div class="profile-row"><span class="label">Phone</span><span><?= e($profile['phone'] ?? '—') ?></span></div>
           <div class="profile-row"><span class="label">Company</span><span><?= e($profile['company'] ?? '—') ?></span></div>
-          <div class="profile-row"><span class="label">Code</span><span style="color:var(--orange)"><?= e($profile['referral_code'] ?? '') ?></span></div>
+          <div class="profile-row"><span class="label">Code</span><span style="color:var(--rust)"><?= e($profile['referral_code'] ?? '') ?></span></div>
           <div class="profile-row"><span class="label">Tier</span><span class="role-badge client_standard">Standard</span></div>
           <div class="profile-row"><span class="label">Since</span><span><?= date('M j, Y', strtotime($profile['created_at'] ?? 'now')) ?></span></div>
         </div>
