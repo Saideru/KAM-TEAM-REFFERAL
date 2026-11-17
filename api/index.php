@@ -9,7 +9,7 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral'];
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => ''];
 $notice = flash();
 
 if ($ref !== '' && !isset($_GET['mode'])) {
@@ -47,6 +47,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old['company']   = trim((string) ($_POST['company'] ?? ''));
         $old['role']      = in_array($_POST['role'] ?? '', ['client_basic', 'client_standard', 'referral'], true) ? $_POST['role'] : 'referral';
         $confirm          = (string) ($_POST['password_confirm'] ?? '');
+        $old['business_nature']    = in_array($_POST['business_nature'] ?? '', BUSINESS_NATURES, true) ? $_POST['business_nature'] : '';
+        $old['business_struggles'] = array_values(array_intersect(array_keys(BUSINESS_STRUGGLES), (array) ($_POST['business_struggles'] ?? [])));
+        $old['business_notes']     = mb_substr(trim((string) ($_POST['business_notes'] ?? '')), 0, 1000);
+
+        if ($old['business_nature'] === '')                    $errors[] = 'Tell us the nature of your business.';
+        if (!$old['business_struggles'] && $old['business_notes'] === '') $errors[] = 'Pick at least one struggle, or tell us more about what you need.';
 
         if ($old['full_name'] === '')                     $errors[] = 'Enter your full name.';
         if (!preg_match('/^[a-z0-9_]{3,20}$/', $username)) $errors[] = 'Username must be 3-20 characters: letters, numbers or underscore.';
@@ -63,6 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'company'   => $old['company'],
                 'ref'       => $ref,
                 'role'      => $old['role'],
+                'business_nature'    => $old['business_nature'],
+                'business_struggles' => $old['business_struggles'],
+                'business_notes'     => $old['business_notes'] ?: null,
             ]);
 
             if ($res['error']) {
@@ -195,6 +204,29 @@ $csrf = csrf_token();
             <div class="field"><label for="reg-password">Password</label><div class="pw-wrap"><input id="reg-password" name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Min 8 chars"><button type="button" class="pw-toggle">Show</button></div></div>
             <div class="field"><label for="reg-password2">Confirm</label><input id="reg-password2" name="password_confirm" type="password" autocomplete="new-password" minlength="8" required placeholder="••••••••"></div>
           </div>
+
+          <fieldset class="biz-fieldset">
+            <legend><span class="label kicker">03 // About your business</span>So we know how KAM Team can help.</legend>
+            <div class="field">
+              <label for="reg-nature">What's the nature of your business?</label>
+              <select id="reg-nature" name="business_nature" required>
+                <option value="">Select one…</option>
+                <?php foreach (BUSINESS_NATURES as $bn): ?><option <?= $old['business_nature'] === $bn ? 'selected' : '' ?>><?= e($bn) ?></option><?php endforeach; ?>
+              </select>
+            </div>
+            <div class="field">
+              <label>What are you struggling with? <span style="opacity:.6">(pick all that apply)</span></label>
+              <div class="struggle-pick">
+                <?php foreach (BUSINESS_STRUGGLES as $key => [$label]): ?>
+                  <label class="struggle-option"><input type="checkbox" name="business_struggles[]" value="<?= e($key) ?>" <?= in_array($key, $old['business_struggles'], true) ? 'checked' : '' ?>><span><?= e($label) ?></span></label>
+                <?php endforeach; ?>
+              </div>
+            </div>
+            <div class="field">
+              <label for="reg-notes">Tell us more <span style="opacity:.6">(optional)</span></label>
+              <textarea id="reg-notes" name="business_notes" rows="3" maxlength="1000" placeholder="e.g. We get inquiries on Facebook but can't reply fast enough."><?= e($old['business_notes']) ?></textarea>
+            </div>
+          </fieldset>
 
           <div class="field">
             <label for="reg-ref">Referral code <span style="opacity:.6">(optional)</span></label>

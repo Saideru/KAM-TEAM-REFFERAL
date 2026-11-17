@@ -120,6 +120,15 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
   </div>
 </header>
 
+<div class="shell">
+<?= app_sidebar([
+    ['label' => 'Choose a plan',  'href' => '#plans',    'icon' => 'box'],
+    ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
+    ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
+    ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
+    ['label' => 'Your referrals', 'href' => '#network',  'icon' => 'tree'],
+    ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
+], 'Referral') ?>
 <main class="wrap">
   <span class="label"><span class="dot" style="background:var(--yellow)"></span>Onboarding // <?= e($profile['referral_code'] ?? '') ?></span>
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--yellow)">Choose your path.</span></h1>
@@ -128,7 +137,7 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
   <?= kyc_banner($profile) ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
-  <section>
+  <section id="plans">
     <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>tier_selector.sh // Choose your account tier</span></div>
     <div class="terminal-body">
       <div class="prompt">$ kamteam --select-tier</div>
@@ -215,7 +224,9 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
     </div>
   </section>
 
-  <section class="card" style="margin:20px 0 12px">
+  <div style="margin-top:20px"><?= business_card($token, $profile, $csrf) ?></div>
+
+  <section class="card" id="share" style="margin-bottom:12px">
     <span class="label">Start building your network — share your referral link</span>
     <div class="share" style="margin-top:8px">
       <input id="share-link" type="text" readonly value="<?= e($shareLink) ?>">
@@ -225,7 +236,7 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
   </section>
 
   <?php if ($earned > 0 || $commissions): ?>
-  <section class="card" style="margin-bottom:12px">
+  <section class="card" id="earnings" style="margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <span class="label">Referral earnings</span>
       <span class="big green" style="margin:0">$<?= number_format($earned, 2) ?></span>
@@ -246,7 +257,7 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
   <?php endif; ?>
 
   <?php if ($referrals): ?>
-  <section class="card">
+  <section class="card" id="network">
     <h2>Your referrals (<?= $totalRefs ?>)</h2>
     <div class="table-scroll"><table>
       <thead><tr><th>Name</th><th>Status</th><th>Joined</th></tr></thead>
@@ -258,6 +269,7 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
   <?php endif; ?>
 
 </main>
+</div>
 <script>
   document.getElementById('copy-btn').addEventListener('click', function () {
     var input = document.getElementById('share-link'), btn = this;
@@ -267,5 +279,6 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
       .finally(function () { btn.textContent = 'Copied ✓'; setTimeout(function () { btn.textContent = 'Copy →'; }, 1800); });
   });
 </script>
+<?= sidebar_scrollspy_script() ?>
 </body>
 </html>

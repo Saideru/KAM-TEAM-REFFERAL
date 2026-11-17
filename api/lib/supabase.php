@@ -154,6 +154,10 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         'referred_by'   => $referrer,
         'role'          => $role,
         'status'        => 'pending',
+        'business_nature'    => $meta['business_nature'] ?? null,
+        'business_struggles' => array_values($meta['business_struggles'] ?? []),
+        'business_notes'     => $meta['business_notes'] ?? null,
+        // assigned_admin is filled by the roulette trigger in the database
     ], null, ['Prefer: return=representation']);
 
     if ($res['error']) {
@@ -161,8 +165,10 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
     }
     $new = $res['body'][0] ?? null;
     if ($new) {
-        notify(SUPABASE_SERVICE_KEY, 'New account application',
-            ($new['full_name'] ?? $username) . ' applied as ' . role_name($role) . '.', null, 'admin', '/dashboard-admin.php#approvals');
+        $who = ($new['full_name'] ?? $username) . ' applied as ' . role_name($role)
+             . (!empty($new['business_nature']) ? ' (' . $new['business_nature'] . ')' : '') . '.'
+             . (!empty($new['business_struggles']) ? ' Needs help with: ' . implode(', ', array_map('struggle_label', $new['business_struggles'])) . '.' : '');
+        notify(SUPABASE_SERVICE_KEY, 'New account application', $who, null, 'admin', '/dashboard-admin.php#approvals');
     }
     return ['error' => null, 'profile' => $new];
 }
@@ -393,13 +399,19 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
 
     $res = supabase_request('PATCH', '/rest/v1/transactions?status=eq.pending&id=eq.' . urlencode($txnId), [
         'status' => 'completed', 'reviewed_by' => $adminId, 'reviewed_at' => date('c'),
-    ], $token, ['Prefer: return=minimal']);
+    ], $token, ['Prefer: return=representation']);
     if ($res['error']) return $res['error'];
+    if (empty($res['body'])) return 'This request was already reviewed.';
+
+    // Roulette: the package goes to the next admin in the 1-2-3 rotation.
+    $owner = roulette_assign($token, $txnId, $txn['user_id']);
 
     audit_log($token, 'approve_activation', 'transaction', $txnId,
-        'Approved ' . ($txn['packages']['name'] ?? $tier) . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—'));
+        'Approved ' . ($txn['packages']['name'] ?? $tier) . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—')
+        . ($owner ? ' → roulette: ' . $owner['full_name'] : ''));
     notify($token, ucfirst($tier) . ' account approved',
-        'Your ' . ($txn['packages']['name'] ?? ucfirst($tier)) . ' plan is now active. Your countdown has started.', $txn['user_id']);
+        'Your ' . ($txn['packages']['name'] ?? ucfirst($tier)) . ' plan is now active. Your countdown has started.'
+        . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
 
     pay_referral_commission($token, $txn);
     return null;
@@ -512,6 +524,177 @@ function reject_application(string $token, string $userId, string $reason): ?str
 
     audit_log($token, 'reject_application', 'profile', $userId, 'Rejected application' . ($reason !== '' ? ' — ' . $reason : ''));
     return null;
+}
+
+// =====================================================================
+// Business profile (asked at registration)
+// =====================================================================
+
+const BUSINESS_NATURES = [
+    'Real estate', 'E-commerce / Retail', 'Food & beverage', 'Health & wellness', 'Professional services',
+    'Construction & home services', 'Education & coaching', 'Marketing / Agency', 'Technology / SaaS',
+    'Manufacturing', 'Logistics & transport', 'Other',
+];
+
+// Struggle key => [label, the KAM Team service that solves it]
+const BUSINESS_STRUGGLES = [
+    'leads'     => ['Getting enough leads & customers',      'S-01 Marketing'],
+    'admin'     => ['Too much admin & repetitive tasks',      'S-02 Virtual Assistance'],
+    'content'   => ['Creating videos & social content',       'S-03 Video Editing'],
+    'books'     => ['Bookkeeping, invoices & taxes',          'S-04 Accounting'],
+    'support'   => ['Answering calls & customer support',     'S-05 Call Center Support'],
+    'projects'  => ['Keeping projects & the team on track',   'S-06 Project Management'],
+    'ai'        => ['Using AI & automation in the business',  'S-07 AI Implementation'],
+];
+
+function struggle_label(string $key): string
+{
+    return BUSINESS_STRUGGLES[$key][0] ?? $key;
+}
+
+// Services that match a user's struggles, for the admin's quick read.
+function suggested_services(array $struggles): array
+{
+    return array_values(array_filter(array_map(fn($k) => BUSINESS_STRUGGLES[$k][1] ?? null, $struggles)));
+}
+
+function business_summary(array $p): string
+{
+    if (empty($p['business_nature']) && empty($p['business_struggles']) && empty($p['business_notes'])) {
+        return '<span style="color:var(--text-dim)">—</span>';
+    }
+    $chips = '';
+    foreach (($p['business_struggles'] ?? []) as $k) $chips .= '<span class="chip">' . e(struggle_label($k)) . '</span>';
+    return '<div class="biz">'
+        . (!empty($p['business_nature']) ? '<strong>' . e($p['business_nature']) . '</strong>' : '')
+        . ($chips ? '<div class="chips">' . $chips . '</div>' : '')
+        . (!empty($p['business_notes']) ? '<p class="biz-notes">“' . e($p['business_notes']) . '”</p>' : '')
+        . '</div>';
+}
+
+// The user's own business card (dashboard), with an inline edit form.
+function business_card(string $token, array $profile, string $csrf): string
+{
+    $contact = null;
+    if (!empty($profile['assigned_admin'])) {
+        $contact = supabase_request('GET', '/rest/v1/profiles?select=full_name,email,phone&id=eq.' . urlencode($profile['assigned_admin']), null, $token)['body'][0] ?? null;
+    }
+    $opts = '<option value="">Select one…</option>';
+    foreach (BUSINESS_NATURES as $bn) $opts .= '<option' . (($profile['business_nature'] ?? '') === $bn ? ' selected' : '') . '>' . e($bn) . '</option>';
+    $boxes = '';
+    foreach (BUSINESS_STRUGGLES as $key => [$label]) {
+        $boxes .= '<label class="struggle-option"><input type="checkbox" name="business_struggles[]" value="' . e($key) . '"'
+            . (in_array($key, $profile['business_struggles'] ?? [], true) ? ' checked' : '') . '><span>' . e($label) . '</span></label>';
+    }
+    return '<section class="card" id="business" style="margin-bottom:12px">'
+        . '<h2>Your business</h2>'
+        . ($contact ? '<p class="contact-line">Your KAM Team contact: <strong>' . e($contact['full_name']) . '</strong>'
+            . (!empty($contact['email']) ? ' · <a href="mailto:' . e($contact['email']) . '">' . e($contact['email']) . '</a>' : '') . '</p>' : '')
+        . business_summary($profile)
+        . '<details class="biz-self"><summary class="btn btn-sm btn-ghost">Update business info</summary>'
+        . '<form method="post" action="/business.php"><input type="hidden" name="csrf" value="' . e($csrf) . '">'
+        . '<div class="field"><label>Nature of business</label><select name="business_nature" required>' . $opts . '</select></div>'
+        . '<div class="field"><label>What are you struggling with?</label><div class="struggle-pick">' . $boxes . '</div></div>'
+        . '<div class="field"><label>Tell us more</label><textarea name="business_notes" rows="3" maxlength="1000">' . e($profile['business_notes'] ?? '') . '</textarea></div>'
+        . '<button class="btn btn-sm btn-solid" type="submit">Save →</button></form></details>'
+        . '</section>';
+}
+
+// =====================================================================
+// Roulette — round-robin assignment of approved packages to admins
+// =====================================================================
+
+// Takes the next turn and hands this package (and the account) to that admin.
+// Returns the admin's profile, or null when nobody is in the rotation.
+function roulette_assign(string $token, string $txnId, string $userId): ?array
+{
+    $turn    = supabase_request('POST', '/rest/v1/rpc/roulette_next', [], $token);
+    $adminId = is_string($turn['body']) ? $turn['body'] : null;
+    if (!$adminId) return null;
+
+    supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($txnId), ['assigned_admin' => $adminId], $token, ['Prefer: return=minimal']);
+    supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), ['assigned_admin' => $adminId], $token, ['Prefer: return=minimal']);
+
+    $admin = supabase_request('GET', '/rest/v1/profiles?select=id,full_name&id=eq.' . urlencode($adminId), null, $token)['body'][0] ?? null;
+    $user  = supabase_request('GET', '/rest/v1/profiles?select=full_name,business_nature,business_struggles&id=eq.' . urlencode($userId), null, $token)['body'][0] ?? [];
+    $pkg   = supabase_request('GET', '/rest/v1/transactions?select=amount,packages!transactions_package_id_fkey(name)&id=eq.' . urlencode($txnId), null, $token)['body'][0] ?? [];
+    notify($token, 'Roulette: a package was assigned to you',
+        ($user['full_name'] ?? 'A client') . ' — ' . ($pkg['packages']['name'] ?? 'plan')
+        . (!empty($user['business_nature']) ? ' · ' . $user['business_nature'] : '')
+        . (!empty($user['business_struggles']) ? '. Needs help with: ' . implode(', ', array_map('struggle_label', $user['business_struggles'])) : '') . '.',
+        $adminId, 'all', '/dashboard-admin.php?mine=1#roulette');
+    return $admin;
+}
+
+function roulette_state(string $token): array
+{
+    $m = supabase_request('GET', '/rest/v1/roulette_members?select=*,admin:profiles!roulette_members_admin_id_fkey(full_name,username,deleted_at)&order=position.asc', null, $token);
+    $next = supabase_request('POST', '/rest/v1/rpc/roulette_peek', [], $token);
+    return [
+        'members' => is_array($m['body']) && !$m['error'] ? $m['body'] : [],
+        'next'    => is_string($next['body']) ? $next['body'] : null,
+    ];
+}
+
+// =====================================================================
+// Sidebar navigation
+// =====================================================================
+
+// $items: [['label' => .., 'panel' => 'users'] (admin tab) or ['label' => .., 'href' => '#x' | '/page.php'], optional 'count', 'icon']
+function app_sidebar(array $items, string $title, ?string $active = null): string
+{
+    $icons = [
+        'home' => '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+        'users' => '<circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 12 0v1"/><path d="M16 4a4 4 0 0 1 0 8"/><path d="M22 21v-1a6 6 0 0 0-4-5.6"/>',
+        'check' => '<path d="M20 6L9 17l-5-5"/>',
+        'id' => '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="12" r="2.5"/><path d="M14 10h4M14 14h4"/>',
+        'qr' => '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/>',
+        'link' => '<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
+        'box' => '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+        'cash' => '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/>',
+        'tool' => '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+        'bell' => '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+        'log' => '<path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+        'wheel' => '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>',
+        'tree' => '<circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v5M12 12l-7 5M12 12l7 5"/>',
+        'user' => '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/>',
+        'brief' => '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+    ];
+    $out = '';
+    foreach ($items as $it) {
+        $svg   = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ($icons[$it['icon'] ?? 'home'] ?? '') . '</svg>';
+        $count = !empty($it['count']) ? '<span class="tab-count">' . (int) $it['count'] . '</span>' : '';
+        $inner = $svg . '<span class="side-label">' . e($it['label']) . '</span>' . $count;
+        if (isset($it['panel'])) {
+            $out .= '<button type="button" class="side-link admin-tab' . ($active === $it['panel'] ? ' active' : '') . '" data-panel="' . e($it['panel']) . '">' . $inner . '</button>';
+        } else {
+            $out .= '<a class="side-link' . ($active === $it['href'] ? ' active' : '') . '" href="' . e($it['href']) . '">' . $inner . '</a>';
+        }
+    }
+    return '<aside class="sidebar" aria-label="' . e($title) . '"><div class="side-title">' . e($title) . '</div><nav class="side-nav">' . $out . '</nav></aside>';
+}
+
+// Highlights the sidebar link for the section currently on screen.
+function sidebar_scrollspy_script(): string
+{
+    return <<<'JS'
+<script>
+(function () {
+  var links = [].slice.call(document.querySelectorAll('.side-nav a[href^="#"]'));
+  if (!links.length || !('IntersectionObserver' in window)) return;
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      if (!en.isIntersecting) return;
+      links.forEach(function (a) { a.classList.remove('active'); });
+      if (byId[en.target.id]) byId[en.target.id].classList.add('active');
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  Object.keys(byId).forEach(function (id) { var el = document.getElementById(id); if (el) io.observe(el); });
+})();
+</script>
+JS;
 }
 
 // =====================================================================

@@ -137,6 +137,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         }
     }
 
+    // ---- Business profile (asked at registration) ----
+    if ($act === 'edit_business') {
+        $uid = (string) ($_POST['user_id'] ?? '');
+        $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), [
+            'business_nature'    => in_array($_POST['business_nature'] ?? '', BUSINESS_NATURES, true) ? $_POST['business_nature'] : null,
+            'business_struggles' => array_values(array_intersect(array_keys(BUSINESS_STRUGGLES), (array) ($_POST['business_struggles'] ?? []))),
+            'business_notes'     => mb_substr(trim((string) ($_POST['business_notes'] ?? '')), 0, 1000) ?: null,
+        ], $token, ['Prefer: return=minimal']);
+        if (!$res['error']) { audit_log($token, 'edit_business', 'profile', $uid, 'Edited business profile'); flash('success', 'Business profile updated.'); header('Location: /dashboard-admin.php?edit_user=' . urlencode($uid) . '#users'); exit; }
+        $errors[] = $res['error'];
+    }
+
+    // ---- Roulette: rotation of approved packages across admins ----
+    if (in_array($act, ['roulette_up', 'roulette_down', 'roulette_toggle', 'roulette_add', 'roulette_remove'], true)) {
+        $aid     = (string) ($_POST['admin_id'] ?? '');
+        $members = roulette_state($token)['members'];
+        $ids     = array_column($members, 'admin_id');
+        $i       = array_search($aid, $ids, true);
+        if ($act === 'roulette_add' && $i === false) {
+            supabase_request('POST', '/rest/v1/roulette_members', ['admin_id' => $aid, 'position' => count($ids) + 1], $token, ['Prefer: return=minimal']);
+        } elseif ($act === 'roulette_remove' && $i !== false) {
+            supabase_request('DELETE', '/rest/v1/roulette_members?admin_id=eq.' . urlencode($aid), null, $token);
+        } elseif ($act === 'roulette_toggle' && $i !== false) {
+            supabase_request('PATCH', '/rest/v1/roulette_members?admin_id=eq.' . urlencode($aid), ['active' => !$members[$i]['active']], $token, ['Prefer: return=minimal']);
+        } elseif ($i !== false) {
+            $j = $act === 'roulette_up' ? $i - 1 : $i + 1;
+            if (isset($ids[$j])) { [$ids[$i], $ids[$j]] = [$ids[$j], $ids[$i]]; }
+            foreach ($ids as $pos => $id) {   // renumber 1..n in the new order
+                supabase_request('PATCH', '/rest/v1/roulette_members?admin_id=eq.' . urlencode($id), ['position' => $pos + 1], $token, ['Prefer: return=minimal']);
+            }
+        }
+        audit_log($token, 'roulette_' . substr($act, 9), 'roulette', $aid, 'Roulette rotation updated');
+        flash('success', 'Roulette updated.'); $back('roulette'); exit;
+    }
+
+    if ($act === 'reassign') {
+        $txnId = (string) ($_POST['txn_id'] ?? '');
+        $to    = (string) ($_POST['assigned_admin'] ?? '');
+        $txn   = supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($txnId), ['assigned_admin' => $to ?: null], $token, ['Prefer: return=representation']);
+        if (!$txn['error'] && !empty($txn['body'])) {
+            supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($txn['body'][0]['user_id']), ['assigned_admin' => $to ?: null], $token, ['Prefer: return=minimal']);
+            audit_log($token, 'reassign', 'transaction', $txnId, 'Package reassigned');
+            if ($to) notify($token, 'A package was reassigned to you', 'Check the Roulette tab for details.', $to, 'all', '/dashboard-admin.php?mine=1#roulette');
+            flash('success', 'Reassigned.'); $back('roulette'); exit;
+        }
+        $errors[] = $txn['error'] ?? 'Transaction not found.';
+    }
+
     // ---- Packages: edits are scheduled 1-7 days ahead ----
     if ($act === 'edit_package') {
         $pid = (string) ($_POST['pkg_id'] ?? '');
@@ -342,7 +390,7 @@ $allRefs = is_array($refRes['body']) && !$refRes['error'] ? $refRes['body'] : []
 $pkgRes  = supabase_request('GET', '/rest/v1/packages?select=*&order=created_at.desc', null, $token);
 $allPkgs = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : [];
 
-$txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,username,email,phone),packages!transactions_package_id_fkey(name,tier)&order=created_at.desc', null, $token);
+$txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,username,email,phone,business_nature,business_struggles),packages!transactions_package_id_fkey(name,tier)&order=created_at.desc', null, $token);
 $allTxns = is_array($txnRes['body']) && !$txnRes['error'] ? $txnRes['body'] : [];
 
 $csRes = supabase_request('GET', '/rest/v1/client_services?select=*,profiles!client_services_client_id_fkey(full_name,email)&order=started_at.desc', null, $token);
@@ -352,6 +400,16 @@ $pendingPayments = array_values(array_filter($allTxns, fn($t) => $t['type'] === 
 $applications    = array_values(array_filter($allProfiles, fn($p) => $p['status'] === 'pending' && $p['role'] !== 'admin' && empty($p['deleted_at'])));
 $rejectedApps    = array_values(array_filter($allProfiles, fn($p) => $p['status'] === 'rejected' && empty($p['deleted_at'])));
 $approvalCount   = count($applications) + count($pendingPayments);
+
+// Roulette
+$roulette  = roulette_state($token);
+$admins    = array_values(array_filter($allProfiles, fn($p) => $p['role'] === 'admin' && empty($p['deleted_at'])));
+$adminName = array_column($admins, 'full_name', 'id');
+$nextUp    = $roulette['next'] ? ($adminName[$roulette['next']] ?? '—') : null;
+$assigned  = array_values(array_filter($allTxns, fn($t) => $t['type'] === 'activation' && $t['status'] === 'completed' && !empty($t['assigned_admin'])));
+$onlyMine  = !empty($_GET['mine']);
+$assignedShown = $onlyMine ? array_values(array_filter($assigned, fn($t) => $t['assigned_admin'] === $adminId)) : $assigned;
+$perAdmin  = array_count_values(array_column($assigned, 'assigned_admin'));
 
 $chRes      = supabase_request('GET', '/rest/v1/package_changes?select=*,packages(name)&order=created_at.desc&limit=30', null, $token);
 $allChanges = is_array($chRes['body']) && !$chRes['error'] ? $chRes['body'] : [];
@@ -406,6 +464,20 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 </header>
 
+<div class="shell">
+<?= app_sidebar([
+    ['label' => 'Users',        'panel' => 'users',        'icon' => 'users'],
+    ['label' => 'Approvals',    'panel' => 'approvals',    'icon' => 'check', 'count' => $approvalCount],
+    ['label' => 'Roulette',     'panel' => 'roulette',     'icon' => 'wheel'],
+    ['label' => 'KYC',          'panel' => 'kyc',          'icon' => 'id',    'count' => count($kycPending)],
+    ['label' => 'Payment',      'panel' => 'payment',      'icon' => 'qr'],
+    ['label' => 'Referrals',    'panel' => 'referrals',    'icon' => 'tree'],
+    ['label' => 'Packages',     'panel' => 'packages',     'icon' => 'box'],
+    ['label' => 'Transactions', 'panel' => 'transactions', 'icon' => 'cash'],
+    ['label' => 'Services',     'panel' => 'services',     'icon' => 'tool'],
+    ['label' => 'Notify',       'panel' => 'notify',       'icon' => 'bell'],
+    ['label' => 'Audit logs',   'panel' => 'logs',         'icon' => 'log'],
+], 'Admin', 'users') ?>
 <main class="wrap">
   <span class="label"><span class="dot"></span>Mission control // <?= e($profile['full_name'] ?? '') ?></span>
   <h1>Admin dashboard. <span class="accent">Manage the program.</span></h1>
@@ -427,18 +499,6 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     <div class="alert alert-warn">No payment QR code yet — referrals can't pay for Standard until you add one in the <a href="#payment" onclick="document.querySelector('.admin-tab[data-panel=payment]').click()">Payment tab</a>.</div>
   <?php endif; ?>
 
-  <div class="admin-tabs">
-    <button class="admin-tab active" data-panel="users">Users</button>
-    <button class="admin-tab" data-panel="approvals">Approvals<?= $approvalCount ? ' <span class="tab-count">' . $approvalCount . '</span>' : '' ?></button>
-    <button class="admin-tab" data-panel="kyc">KYC<?= $kycPending ? ' <span class="tab-count">' . count($kycPending) . '</span>' : '' ?></button>
-    <button class="admin-tab" data-panel="payment">Payment</button>
-    <button class="admin-tab" data-panel="referrals">Referrals</button>
-    <button class="admin-tab" data-panel="packages">Packages</button>
-    <button class="admin-tab" data-panel="transactions">Transactions</button>
-    <button class="admin-tab" data-panel="services">Services</button>
-    <button class="admin-tab" data-panel="notify">Notify</button>
-    <button class="admin-tab" data-panel="logs">Audit logs</button>
-  </div>
 
   <!-- USERS -->
   <div id="panel-users" class="admin-panel active">
@@ -451,6 +511,15 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Account expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty to keep it as it is<?= isset(TIER_MONTHS[$editUser['role']]) ? ' (' . TIER_MONTHS[$editUser['role']] . '-month ' . e(role_name($editUser['role'])) . ' limit)' : '' ?>.</div><label class="check" style="margin-top:6px"><input type="checkbox" name="lifecycle_clear" value="1"> Remove the expiry (unlimited access)</label></div></div>
         <div class="row"><div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave empty to keep current"></div><div class="field"><label>Role / status</label><div class="hint" style="margin-top:10px">Change these with the selectors in the table below.</div></div></div>
         <button class="btn btn-sm btn-solid" type="submit">Save user →</button>
+      </form>
+
+      <form method="post" class="biz-edit"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="edit_business"><input type="hidden" name="user_id" value="<?= e($editUser['id']) ?>">
+        <h3>Business profile</h3>
+        <?php $sv = suggested_services($editUser['business_struggles'] ?? []); if ($sv): ?><p class="hint" style="margin:0 0 10px">Suggested services: <?= e(implode(', ', $sv)) ?></p><?php endif; ?>
+        <div class="field"><label>Nature of business</label><select name="business_nature"><option value="">—</option><?php foreach (BUSINESS_NATURES as $bn): ?><option <?= ($editUser['business_nature'] ?? '') === $bn ? 'selected' : '' ?>><?= e($bn) ?></option><?php endforeach; ?></select></div>
+        <div class="field"><label>Struggles</label><div class="struggle-pick"><?php foreach (BUSINESS_STRUGGLES as $key => [$label]): ?><label class="struggle-option"><input type="checkbox" name="business_struggles[]" value="<?= e($key) ?>" <?= in_array($key, $editUser['business_struggles'] ?? [], true) ? 'checked' : '' ?>><span><?= e($label) ?></span></label><?php endforeach; ?></div></div>
+        <div class="field"><label>Notes</label><textarea name="business_notes" rows="2" maxlength="1000"><?= e($editUser['business_notes'] ?? '') ?></textarea></div>
+        <button class="btn btn-sm" type="submit">Save business profile →</button>
       </form>
     </div>
     <?php endif; ?>
@@ -489,12 +558,13 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">New accounts wait behind the approval wall until you approve them. Approving opens their dashboard and starts their countdown.</p>
       <?php if (!$applications): ?><p class="empty">No applications waiting.</p>
       <?php else: ?><div class="table-scroll"><table>
-        <thead><tr><th>Applicant</th><th>Applied as</th><th>Contact</th><th>Referred by</th><th>Applied</th><th>Decision</th></tr></thead>
+        <thead><tr><th>Applicant</th><th>Applied as</th><th>Business &amp; struggles</th><th>Contact</th><th>Referred by</th><th>Applied</th><th>Decision</th></tr></thead>
         <tbody><?php foreach ($applications as $a):
             $refBy = $a['referred_by'] ? (current(array_filter($allProfiles, fn($x) => $x['id'] === $a['referred_by']))['full_name'] ?? '—') : '—'; ?>
           <tr>
             <td><strong><?= e($a['full_name']) ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($a['username']) ?><?= $a['company'] ? ' · ' . e($a['company']) : '' ?></span></td>
             <td><span class="role-badge <?= e($a['role']) ?>"><?= e(role_name($a['role'])) ?></span></td>
+            <td style="min-width:200px"><?= business_summary($a) ?></td>
             <td style="font-size:12px"><?= e($a['email'] ?? '—') ?><br><?= e($a['phone'] ?? '') ?></td>
             <td style="font-size:12px"><?= e($refBy) ?></td>
             <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($a['created_at'])) ?></td>
@@ -518,6 +588,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     </div>
 
     <div class="card"><h2>Plan requests</h2>
+      <?php if ($nextUp): ?><p class="roulette-next">Next approved plan goes to <strong><?= e($nextUp) ?></strong> (roulette)</p><?php endif; ?>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Referrals asking for a Basic (free) or Standard (paid) account. For paid plans, check the reference number in your payment app first. Approving switches them to that plan and starts their countdown.</p>
       <?php if (!$pendingPayments): ?><p class="empty">No plan requests waiting.</p>
       <?php else: ?><div class="table-scroll"><table>
@@ -772,6 +843,50 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     </div>
   </div>
 
+  <!-- ROULETTE -->
+  <div id="panel-roulette" class="admin-panel">
+    <div class="card" style="margin-bottom:12px"><h2>Roulette rotation</h2>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every Basic or Standard plan you approve is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped.</p>
+      <?php if (!$roulette['members']): ?><p class="empty">Nobody is in the rotation — approved plans won't be assigned. Add an admin below.</p>
+      <?php else: ?>
+      <ol class="roulette">
+        <?php $n = count($roulette['members']); foreach ($roulette['members'] as $k => $m): $isNext = $m['admin_id'] === $roulette['next']; ?>
+          <li class="roulette-slot<?= $isNext ? ' is-next' : '' ?><?= $m['active'] ? '' : ' is-paused' ?>">
+            <span class="roulette-num"><?= $k + 1 ?></span>
+            <span class="roulette-name"><strong><?= e($m['admin']['full_name'] ?? '—') ?></strong><small><?= (int) ($perAdmin[$m['admin_id']] ?? 0) ?> package<?= ($perAdmin[$m['admin_id']] ?? 0) == 1 ? '' : 's' ?> assigned<?= $m['active'] ? '' : ' · paused' ?></small></span>
+            <?php if ($isNext): ?><span class="pill pending">next up</span><?php endif; ?>
+            <span class="roulette-actions">
+              <?php foreach ([['roulette_up', '↑', $k > 0], ['roulette_down', '↓', $k < $n - 1], ['roulette_toggle', $m['active'] ? 'Pause' : 'Resume', true], ['roulette_remove', 'Remove', true]] as [$a, $lbl, $show]): if (!$show) continue; ?>
+                <form method="post" class="inline-form" <?= $a === 'roulette_remove' ? 'onsubmit="return confirm(\'Remove from the rotation?\')"' : '' ?>><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="<?= $a ?>"><input type="hidden" name="admin_id" value="<?= e($m['admin_id']) ?>"><button class="btn btn-sm<?= $a === 'roulette_remove' ? ' btn-danger' : '' ?>" type="submit"><?= e($lbl) ?></button></form>
+              <?php endforeach; ?>
+            </span>
+          </li>
+        <?php endforeach; ?>
+      </ol>
+      <?php endif; ?>
+      <?php $outside = array_filter($admins, fn($a) => !in_array($a['id'], array_column($roulette['members'], 'admin_id'), true)); if ($outside): ?>
+        <form method="post" class="inline-form" style="margin-top:12px"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="roulette_add"><select name="admin_id"><?php foreach ($outside as $a): ?><option value="<?= e($a['id']) ?>"><?= e($a['full_name']) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">+ Add to rotation</button></form>
+      <?php endif; ?>
+    </div>
+
+    <div class="card"><div class="edit-head"><h2>Assigned packages</h2>
+      <a class="btn btn-sm btn-ghost" href="/dashboard-admin.php<?= $onlyMine ? '' : '?mine=1' ?>#roulette"><?= $onlyMine ? 'Show everyone' : 'Only mine' ?></a></div>
+      <?php if (!$assignedShown): ?><p class="empty"><?= $onlyMine ? 'Nothing assigned to you yet.' : 'No packages assigned yet.' ?></p>
+      <?php else: ?><div class="table-scroll"><table>
+        <thead><tr><th>Client</th><th>Package</th><th>Business &amp; struggles</th><th>Approved</th><th>Assigned to</th></tr></thead>
+        <tbody><?php foreach ($assignedShown as $t): ?>
+          <tr>
+            <td><strong><?= e($t['profiles']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($t['profiles']['email'] ?? '') ?> <?= e($t['profiles']['phone'] ?? '') ?></span></td>
+            <td><?= e($t['packages']['name'] ?? '—') ?><br><span class="role-badge <?= e(tier_role($t['packages']['tier'] ?? 'basic')) ?>"><?= e($t['packages']['tier'] ?? '') ?></span></td>
+            <td style="min-width:200px"><?= business_summary($t['profiles'] ?? []) ?></td>
+            <td style="font-size:12px"><?= date('M j, Y', strtotime($t['reviewed_at'] ?? $t['created_at'])) ?></td>
+            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="reassign"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><select name="assigned_admin"><?php foreach ($admins as $a): ?><option value="<?= e($a['id']) ?>" <?= $t['assigned_admin'] === $a['id'] ? 'selected' : '' ?>><?= e($a['full_name']) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Move</button></form></td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div><?php endif; ?>
+    </div>
+  </div>
+
   <!-- NOTIFY -->
   <div id="panel-notify" class="admin-panel">
     <div class="card"><h2>Send a notification</h2>
@@ -803,6 +918,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     </div>
   </div>
 </main>
+</div>
 
 <script>
   (function () {

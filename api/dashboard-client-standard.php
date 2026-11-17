@@ -50,6 +50,17 @@ $serviceMeta = [
   </div>
 </header>
 
+<div class="shell">
+<?= app_sidebar([
+    ['label' => 'Overview',       'href' => '#overview', 'icon' => 'home'],
+    ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
+    ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
+    ['label' => 'Network',        'href' => '#network',  'icon' => 'tree'],
+    ['label' => 'Services',       'href' => '#services', 'icon' => 'tool'],
+    ['label' => 'Ledger',         'href' => '#ledger',   'icon' => 'cash'],
+    ['label' => 'Account',        'href' => '#account',  'icon' => 'user'],
+    ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
+], 'Standard client') ?>
 <main class="wrap">
   <span class="label"><span class="dot" style="background:var(--orange)"></span>Standard client // <?= e($profile['referral_code'] ?? '') ?></span>
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--rust)">Standard tier — full access.</span></h1>
@@ -57,7 +68,7 @@ $serviceMeta = [
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?= kyc_banner($profile) ?>
 
-  <?= lifecycle_countdown($profile, 'Account active for // 27 months + 3 per referral') ?>
+  <div id="overview"><?= lifecycle_countdown($profile, 'Account active for // 27 months + 3 per referral') ?></div>
 
   <section class="grid">
     <div class="card"><span class="label">01 // Services</span><div class="big cyan"><?= $active ?></div></div>
@@ -66,7 +77,9 @@ $serviceMeta = [
     <div class="card"><span class="label">04 // Total earned</span><div class="big orange">$<?= number_format($outright, 2) ?></div></div>
   </section>
 
-  <section class="card" style="margin-bottom:12px">
+  <?= business_card($token, $profile, $csrf) ?>
+
+  <section class="card" id="share" style="margin-bottom:12px">
     <span class="label">Your referral link — share to extend your lifecycle</span>
     <div class="share" style="margin-top:8px">
       <input id="share-link" type="text" readonly value="<?= e($shareLink) ?>">
@@ -76,7 +89,7 @@ $serviceMeta = [
 
   <div class="cols">
     <div>
-      <section class="card" style="margin-bottom:12px">
+      <section class="card" id="network" style="margin-bottom:12px">
         <h2>Your referral network</h2>
         <?php if (!$referrals): ?><p class="empty">No referrals yet. Share your link.</p>
         <?php else: ?><div class="table-scroll"><table>
@@ -92,7 +105,7 @@ $serviceMeta = [
         </table></div><?php endif; ?>
       </section>
 
-      <section class="card">
+      <section class="card" id="services">
         <h2>Your services</h2>
         <?php if (!$services): ?><p class="empty">No services assigned yet.</p>
         <?php else: ?><div class="svc-list">
@@ -109,7 +122,7 @@ $serviceMeta = [
     </div>
 
     <div>
-      <section class="card" style="margin-bottom:12px">
+      <section class="card" id="ledger" style="margin-bottom:12px">
         <h2>Commission ledger</h2>
         <?php if (!$txns): ?><p class="empty">No transactions yet.</p>
         <?php else: ?><div class="table-scroll"><table>
@@ -126,7 +139,7 @@ $serviceMeta = [
         </table></div><?php endif; ?>
       </section>
 
-      <section class="card">
+      <section class="card" id="account">
         <h2>Account</h2>
         <div class="profile-info">
           <div class="profile-row"><span class="label">Name</span><span><?= e($profile['full_name'] ?? '') ?></span></div>
@@ -142,6 +155,7 @@ $serviceMeta = [
     </div>
   </div>
 </main>
+</div>
 <script>
   document.getElementById('copy-btn').addEventListener('click', function () {
     var input = document.getElementById('share-link'), btn = this;
@@ -152,5 +166,6 @@ $serviceMeta = [
   });
 </script>
 <?= lifecycle_countdown_script() ?>
+<?= sidebar_scrollspy_script() ?>
 </body>
 </html>

@@ -455,3 +455,69 @@ a.notif-item:hover { background: var(--surface-2); }
 .dot.pulse { animation: wallPulse 1.4s ease-in-out infinite; }
 @keyframes wallPulse { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
+
+/* ---------- App shell + sidebar ---------- */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); max-width: 1440px; margin: 0 auto; }
+.shell > .wrap { max-width: none; margin: 0; min-width: 0; }
+.sidebar { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; padding: 24px 12px; border-right: 1px solid var(--border); background: var(--surface); }
+.side-title { padding: 0 10px 12px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); }
+.side-nav { display: flex; flex-direction: column; gap: 2px; }
+.side-link, .side-link.admin-tab {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin: 0; padding: 9px 10px;
+  border: 0; border-left: 3px solid transparent; border-radius: 0 var(--radius) var(--radius) 0;
+  background: none; cursor: pointer; text-align: left; text-decoration: none;
+  font-family: var(--font); font-size: 12px; letter-spacing: .06em; text-transform: none; color: var(--text-muted);
+}
+.side-link svg { flex: none; }
+.side-link .side-label { flex: 1; }
+.side-link:hover { background: var(--surface-2); color: var(--text); }
+.side-link.active, .side-link.admin-tab.active { border-left-color: var(--orange); background: var(--orange-dim); color: var(--rust); }
+.side-link .tab-count { margin-left: auto; }
+@media (max-width: 900px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: sticky; top: 0; z-index: 40; height: auto; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .side-title { display: none; }
+  .side-nav { flex-direction: row; overflow-x: auto; scrollbar-width: none; }
+  .side-nav::-webkit-scrollbar { display: none; }
+  .side-link, .side-link.admin-tab { width: auto; flex: none; white-space: nowrap; border-left: 0; border-bottom: 3px solid transparent; border-radius: var(--radius) var(--radius) 0 0; }
+  .side-link.active, .side-link.admin-tab.active { border-bottom-color: var(--orange); }
+}
+section[id], div[id="overview"] { scroll-margin-top: 16px; }
+
+/* ---------- Business profile ---------- */
+.biz-fieldset { border: 1px solid var(--border-light); border-radius: var(--radius); padding: 14px; margin: 0 0 16px; }
+.biz-fieldset legend { padding: 0 6px; font-size: 13px; color: var(--text-muted); }
+.biz-fieldset legend .label { display: block; }
+.struggle-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+@media (max-width: 480px) { .struggle-pick { grid-template-columns: 1fr; } }
+.struggle-option { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface-2); font-size: 12px; line-height: 1.35; cursor: pointer; }
+.struggle-option input { accent-color: var(--orange); margin-top: 1px; flex: none; }
+.struggle-option:has(input:checked) { border-color: var(--rust); background: var(--orange-dim); }
+.biz strong { display: block; font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--orange-dim); border: 1px solid rgba(184, 66, 15, .25); color: var(--rust); font-size: 11px; }
+.biz-notes { margin: 6px 0 0; font-size: 12px; color: var(--text-muted); font-style: italic; }
+.biz-self { margin-top: 12px; }
+.biz-self > summary { list-style: none; display: inline-flex; width: auto; }
+.biz-self > summary::-webkit-details-marker { display: none; }
+.biz-self form { margin-top: 12px; }
+.biz-edit { margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--border-light); }
+.biz-edit h3 { margin: 0 0 8px; font-size: 13px; color: var(--rust); }
+.contact-line { margin: 0 0 10px; font-size: 13px; }
+
+/* ---------- Roulette ---------- */
+.roulette { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.roulette-slot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface-2); }
+.roulette-slot.is-next { border-color: var(--rust); background: var(--orange-dim); }
+.roulette-slot.is-paused { opacity: .55; }
+.roulette-num { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--orange); color: #1A1917; font-family: var(--font-head); font-weight: 700; }
+.roulette-name { flex: 1; min-width: 140px; }
+.roulette-name small { display: block; font-size: 11px; color: var(--text-dim); }
+.roulette-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.roulette-next { margin: -4px 0 12px; font-size: 13px; color: var(--rust); }
+.field label.struggle-option { display: flex; margin: 0; font-size: 12px; letter-spacing: 0; text-transform: none; color: var(--text); }
+.field .struggle-option input { width: 14px; height: 14px; padding: 0; border: 0; background: none; flex: none; }
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .roulette-actions { width: 100%; }
+}

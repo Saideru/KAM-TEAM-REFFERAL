@@ -50,6 +50,15 @@ $serviceMeta = [
   </div>
 </header>
 
+<div class="shell">
+<?= app_sidebar([
+    ['label' => 'Overview',       'href' => '#overview', 'icon' => 'home'],
+    ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
+    ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
+    ['label' => 'Services',       'href' => '#services', 'icon' => 'tool'],
+    ['label' => 'Account',        'href' => '#account',  'icon' => 'user'],
+    ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
+], 'Basic client') ?>
 <main class="wrap">
   <span class="label"><span class="dot"></span>Basic client // <?= e($profile['referral_code'] ?? '') ?></span>
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent">Basic tier active.</span></h1>
@@ -57,7 +66,7 @@ $serviceMeta = [
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?= kyc_banner($profile) ?>
 
-  <?= lifecycle_countdown($profile, 'Account active for // 3-month window') ?>
+  <div id="overview"><?= lifecycle_countdown($profile, 'Account active for // 3-month window') ?></div>
 
   <section class="grid grid-3">
     <div class="card"><span class="label">01 // Active services</span><div class="big cyan"><?= $active ?></div></div>
@@ -65,7 +74,9 @@ $serviceMeta = [
     <div class="card"><span class="label">03 // Commissions</span><div class="big green">$<?= number_format($commissions, 2) ?></div></div>
   </section>
 
-  <section class="card" style="margin-bottom:12px">
+  <?= business_card($token, $profile, $csrf) ?>
+
+  <section class="card" id="share" style="margin-bottom:12px">
     <span class="label">Your referral link</span>
     <div class="share" style="margin-top:8px">
       <input id="share-link" type="text" readonly value="<?= e($shareLink) ?>">
@@ -74,7 +85,7 @@ $serviceMeta = [
   </section>
 
   <div class="cols">
-    <section class="card">
+    <section class="card" id="services">
       <h2>Your services</h2>
       <?php if (!$services): ?><p class="empty">No services assigned yet.</p>
       <?php else: ?><div class="svc-list">
@@ -90,7 +101,7 @@ $serviceMeta = [
       </div><?php endif; ?>
     </section>
 
-    <section class="card">
+    <section class="card" id="account">
       <h2>Your account</h2>
       <div class="profile-info">
         <div class="profile-row"><span class="label">Name</span><span><?= e($profile['full_name'] ?? '') ?></span></div>
@@ -114,6 +125,7 @@ $serviceMeta = [
     </section>
   </div>
 </main>
+</div>
 <script>
   document.getElementById('copy-btn').addEventListener('click', function () {
     var input = document.getElementById('share-link'), btn = this;
@@ -124,5 +136,6 @@ $serviceMeta = [
   });
 </script>
 <?= lifecycle_countdown_script() ?>
+<?= sidebar_scrollspy_script() ?>
 </body>
 </html>
