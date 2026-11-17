@@ -13,6 +13,7 @@
     { "source": "/dashboard-client-standard.php", "destination": "/api/dashboard-client-standard.php" },
     { "source": "/dashboard-referral.php", "destination": "/api/dashboard-referral.php" },
     { "source": "/dashboard-client.php", "destination": "/api/dashboard-client.php" },
-    { "source": "/logout.php", "destination": "/api/logout.php" }
+    { "source": "/logout.php", "destination": "/api/logout.php" },
+    { "source": "/diag.php", "destination": "/api/diag.php" }
   ]
 }
