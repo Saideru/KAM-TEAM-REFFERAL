@@ -107,8 +107,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             'email'     => $email !== '' ? $email : null,
             'phone'     => trim((string) ($_POST['phone'] ?? '')) ?: null,
             'company'   => trim((string) ($_POST['company'] ?? '')) ?: null,
-            'lifecycle_expires_at' => $exp !== '' ? date('c', strtotime($exp)) : null,
         ];
+        // A blank expiry leaves the lifecycle alone. Clearing it has to be
+        // deliberate, otherwise editing a phone number would hand a Basic
+        // client unlimited access.
+        if ($exp !== '') {
+            $patch['lifecycle_expires_at'] = date('c', strtotime($exp));
+        } elseif (!empty($_POST['lifecycle_clear'])) {
+            $patch['lifecycle_expires_at'] = null;
+        }
         if ($patch['full_name'] === '')                       $errors[] = 'Name is required.';
         if (!preg_match('/^[a-z0-9_]{3,20}$/', $uname))        $errors[] = 'Username must be 3-20 letters, numbers or underscore.';
         if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid email.';
@@ -441,7 +448,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="edit_user"><input type="hidden" name="user_id" value="<?= e($editUser['id']) ?>">
         <div class="row"><div class="field"><label>Full name</label><input name="full_name" required value="<?= e($editUser['full_name']) ?>"></div><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($editUser['username']) ?>"></div></div>
         <div class="row"><div class="field"><label>Email</label><input name="email" type="email" value="<?= e($editUser['email'] ?? '') ?>"></div><div class="field"><label>Phone</label><input name="phone" value="<?= e($editUser['phone'] ?? '') ?>"></div></div>
-        <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Account expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty for no expiry.</div></div></div>
+        <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Account expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty to keep it as it is<?= isset(TIER_MONTHS[$editUser['role']]) ? ' (' . TIER_MONTHS[$editUser['role']] . '-month ' . e(role_name($editUser['role'])) . ' limit)' : '' ?>.</div><label class="check" style="margin-top:6px"><input type="checkbox" name="lifecycle_clear" value="1"> Remove the expiry (unlimited access)</label></div></div>
         <div class="row"><div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave empty to keep current"></div><div class="field"><label>Role / status</label><div class="hint" style="margin-top:10px">Change these with the selectors in the table below.</div></div></div>
         <button class="btn btn-sm btn-solid" type="submit">Save user →</button>
       </form>
