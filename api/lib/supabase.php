@@ -132,10 +132,13 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         $referrer = $r['body'][0]['id'] ?? null;
     }
 
-    $role = in_array($meta['role'] ?? '', ['client_basic', 'client_standard', 'referral'], true)
+    // Standard can never be self-assigned at sign-up: it requires a paid,
+    // admin-approved activation (see approve_activation()).
+    $role = in_array($meta['role'] ?? '', ['client_basic', 'referral'], true)
         ? $meta['role'] : 'referral';
 
     $res = supabase_request('POST', '/rest/v1/profiles', [
+        'lifecycle_expires_at' => tier_expiry($role),
         'full_name'     => $meta['full_name'] ?: $username,
         'username'      => $username,
         'email'         => $email ?: null,
@@ -302,6 +305,163 @@ function audit_log(string $token, string $action, ?string $entityType = null, ?s
         'summary'     => $summary,
         'ip_address'  => $ip,
     ], $token, ['Prefer: return=minimal']);
+}
+
+// =====================================================================
+// Tiers, activation & approvals
+// =====================================================================
+
+// Lifecycle length per client role, in months.
+const TIER_MONTHS = ['client_basic' => 3, 'client_standard' => 27];
+
+function tier_expiry(string $role): ?string
+{
+    $months = TIER_MONTHS[$role] ?? 0;
+    return $months > 0 ? date('c', strtotime("+{$months} months")) : null;
+}
+
+function tier_role(string $tier): string
+{
+    return $tier === 'standard' ? 'client_standard' : 'client_basic';
+}
+
+// Turns a user into a Basic or Standard client and starts their lifecycle.
+function activate_account(string $token, string $userId, string $tier): ?string
+{
+    $role = tier_role($tier);
+    $res  = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), [
+        'role'                 => $role,
+        'status'               => 'accepted',
+        'lifecycle_expires_at' => tier_expiry($role),
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return $res['error'];
+
+    // Mark the user's own referral link as active now that they converted.
+    supabase_request('PATCH', '/rest/v1/referrals?status=eq.pending&referred_id=eq.' . urlencode($userId),
+        ['status' => 'active'], $token, ['Prefer: return=minimal']);
+    return null;
+}
+
+function fetch_activation_txn(string $token, string $txnId): ?array
+{
+    $res = supabase_request('GET', '/rest/v1/transactions?select=*,packages!transactions_package_id_fkey(name,tier)&type=eq.activation&id=eq.' . urlencode($txnId), null, $token);
+    return $res['body'][0] ?? null;
+}
+
+// Admin approves a pending paid activation: completes the transaction and
+// upgrades the user to the tier of the package they paid for.
+function approve_activation(string $token, string $txnId, string $adminId): ?string
+{
+    $txn = fetch_activation_txn($token, $txnId);
+    if (!$txn)                         return 'Transaction not found.';
+    if ($txn['status'] !== 'pending')  return 'This request was already reviewed.';
+
+    $tier = $txn['packages']['tier'] ?? 'standard';
+    $err  = activate_account($token, $txn['user_id'], $tier);
+    if ($err) return $err;
+
+    $res = supabase_request('PATCH', '/rest/v1/transactions?status=eq.pending&id=eq.' . urlencode($txnId), [
+        'status' => 'completed', 'reviewed_by' => $adminId, 'reviewed_at' => date('c'),
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return $res['error'];
+
+    audit_log($token, 'approve_activation', 'transaction', $txnId,
+        'Approved ' . ($txn['packages']['name'] ?? $tier) . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—'));
+    return null;
+}
+
+function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
+{
+    $txn = fetch_activation_txn($token, $txnId);
+    if (!$txn)                        return 'Transaction not found.';
+    if ($txn['status'] !== 'pending') return 'This request was already reviewed.';
+
+    $res = supabase_request('PATCH', '/rest/v1/transactions?status=eq.pending&id=eq.' . urlencode($txnId), [
+        'status' => 'failed', 'reviewed_by' => $adminId, 'reviewed_at' => date('c'),
+        'notes'  => trim('Rejected by admin. ' . $reason),
+    ], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return $res['error'];
+
+    audit_log($token, 'reject_activation', 'transaction', $txnId, 'Rejected payment ref ' . ($txn['payment_ref'] ?? '—') . ($reason !== '' ? ' — ' . $reason : ''));
+    return null;
+}
+
+// =====================================================================
+// App settings (payment QR etc.)
+// =====================================================================
+
+function get_settings(string $token, array $keys): array
+{
+    $res = supabase_request('GET', '/rest/v1/app_settings?select=key,value&key=in.(' . implode(',', array_map('rawurlencode', $keys)) . ')', null, $token);
+    $out = array_fill_keys($keys, '');
+    foreach ((is_array($res['body']) && !$res['error']) ? $res['body'] : [] as $row) {
+        $out[$row['key']] = (string) $row['value'];
+    }
+    return $out;
+}
+
+function set_setting(string $token, string $key, ?string $value): ?string
+{
+    $res = supabase_request('POST', '/rest/v1/app_settings?on_conflict=key',
+        ['key' => $key, 'value' => $value, 'updated_at' => date('c')],
+        $token, ['Prefer: resolution=merge-duplicates,return=minimal']);
+    return $res['error'];
+}
+
+// =====================================================================
+// Live lifecycle countdown
+// =====================================================================
+
+function lifecycle_countdown(array $profile, string $title): string
+{
+    $lc = format_lifecycle($profile);
+    if (empty($profile['lifecycle_expires_at'])) {
+        return '<div class="card countdown-card"><span class="label">' . e($title) . '</span><p class="empty" style="margin:8px 0 0">No expiry set on this account.</p></div>';
+    }
+    $expires = strtotime($profile['lifecycle_expires_at']) * 1000;
+    $created = strtotime($profile['created_at']) * 1000;
+    $unit = fn(string $k, string $l) => '<div class="cd-unit"><span class="cd-num" data-cd="' . $k . '">--</span><span class="cd-lbl">' . $l . '</span></div>';
+
+    return '<div class="card countdown-card" data-countdown data-expires="' . $expires . '" data-start="' . $created . '" data-now="' . (time() * 1000) . '">'
+        . '<div class="cd-head"><span class="label">' . e($title) . '</span><span class="cd-expiry" data-cd="expiry">Expires ' . e(date('M j, Y', strtotime($profile['lifecycle_expires_at']))) . '</span></div>'
+        . '<div class="cd-grid">' . $unit('d', 'Days') . $unit('h', 'Hours') . $unit('m', 'Minutes') . $unit('s', 'Seconds') . '</div>'
+        . '<div class="cd-total" data-cd="total">' . e($lc['text']) . '</div>'
+        . '<div class="lifecycle-bar"><div class="lifecycle-fill ' . e($lc['class']) . '" data-cd="bar" style="width:' . $lc['pct'] . '%"></div></div>'
+        . '</div>';
+}
+
+function lifecycle_countdown_script(): string
+{
+    return <<<'JS'
+<script>
+(function () {
+  document.querySelectorAll('[data-countdown]').forEach(function (el) {
+    var expires = +el.dataset.expires, start = +el.dataset.start;
+    var skew = +el.dataset.now - Date.now();            // trust the server clock
+    var q = function (k) { return el.querySelector('[data-cd="' + k + '"]'); };
+    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+    q('expiry').textContent = 'Expires ' + new Date(expires).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+    function tick() {
+      var left = Math.max(0, expires - (Date.now() + skew));
+      var s = Math.floor(left / 1000);
+      var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+      q('d').textContent = d; q('h').textContent = pad(h); q('m').textContent = pad(m); q('s').textContent = pad(s % 60);
+      var hours = Math.floor(s / 3600);
+      q('total').textContent = left > 0
+        ? hours.toLocaleString() + ' hours ' + pad(m) + ' minutes remaining'
+        : 'Account expired';
+      var pct = Math.round(left / Math.max(expires - start, 1) * 100);
+      var bar = q('bar');
+      bar.style.width = pct + '%';
+      bar.className = 'lifecycle-fill ' + (pct < 20 ? 'critical' : pct < 40 ? 'warn' : 'ok');
+      el.classList.toggle('is-expired', left === 0);
+      if (left > 0) setTimeout(tick, 1000 - (Date.now() % 1000));
+    }
+    tick();
+  });
+})();
+</script>
+JS;
 }
 
 // =====================================================================

@@ -11,6 +11,7 @@ create extension if not exists pgcrypto with schema extensions;
 -- Roles: admin | client_basic | client_standard | referral
 -- Status: pending | accepted | suspended
 -- ---------------------------------------------------------------------
+drop table if exists public.app_settings cascade;
 drop table if exists public.system_logs cascade;
 drop table if exists public.transactions cascade;
 drop table if exists public.referrals cascade;
@@ -56,7 +57,8 @@ create table public.packages (
   tier                 text not null default 'basic'
                          check (tier in ('basic', 'standard')),
   active               boolean not null default true,
-  created_at           timestamptz not null default now()
+  created_at           timestamptz not null default now(),
+  constraint packages_basic_is_free check (tier <> 'basic' or price = 0)
 );
 
 -- ---------------------------------------------------------------------
@@ -71,11 +73,26 @@ create table public.transactions (
   status      text not null default 'pending'
                 check (status in ('pending', 'completed', 'failed', 'reversed')),
   notes       text,
+  payment_ref text,
+  reviewed_by uuid references public.profiles (id) on delete set null,
+  reviewed_at timestamptz,
   created_at  timestamptz not null default now()
 );
 
 create index transactions_user_idx on public.transactions (user_id);
 create index transactions_type_idx on public.transactions (type);
+create unique index transactions_one_pending_activation
+  on public.transactions (user_id)
+  where type = 'activation' and status = 'pending';
+
+-- ---------------------------------------------------------------------
+-- 03b // APP SETTINGS  (payment QR, account name, instructions)
+-- ---------------------------------------------------------------------
+create table public.app_settings (
+  key         text primary key,
+  value       text,
+  updated_at  timestamptz not null default now()
+);
 
 -- ---------------------------------------------------------------------
 -- 04 // REFERRALS  (user-to-user referral tree)
@@ -231,12 +248,13 @@ alter table public.client_services enable row level security;
 alter table public.packages        enable row level security;
 alter table public.transactions    enable row level security;
 alter table public.system_logs     enable row level security;
+alter table public.app_settings    enable row level security;
 
 -- ---------------------------------------------------------------------
 -- 09 // SEED DEFAULT PACKAGES
 -- ---------------------------------------------------------------------
 insert into public.packages (name, description, price, commission_outright, commission_unilevel, tier) values
-  ('Basic Starter',    'Entry-level 3-month access',          49.00,  10.00, 0,    'basic'),
+  ('Basic Starter',    'Entry-level 3-month access',          0.00,   10.00, 0,    'basic'),
   ('Standard Pro',     'Full 27-month access with unilevel',  100.00, 25.00, 5.00, 'standard'),
   ('Marketing Suite',  'Complete marketing service bundle',    199.00, 40.00, 8.00, 'standard'),
   ('AI Implementation','AI workflow automation package',       299.00, 60.00, 12.00,'standard');

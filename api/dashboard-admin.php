@@ -20,7 +20,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $uid  = $_POST['user_id'] ?? '';
         $role = in_array($_POST['new_role'] ?? '', $roleOptions, true) ? $_POST['new_role'] : null;
         if ($uid && $role) {
-            $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), ['role' => $role], $token, ['Prefer: return=minimal']);
+            $patch = ['role' => $role];
+            // Moving someone onto a client tier by hand starts that tier's lifecycle.
+            if (isset(TIER_MONTHS[$role])) $patch['lifecycle_expires_at'] = tier_expiry($role);
+            $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), $patch, $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'role_change', 'profile', $uid, 'Changed role to ' . $role);
                 flash('success', 'Role updated.'); header('Location: /dashboard-admin.php#users'); exit;
@@ -82,7 +85,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             'commission_unilevel' => max(0, (float) ($_POST['pkg_comm_uni'] ?? 0)),
             'tier' => in_array($_POST['pkg_tier'] ?? '', ['basic', 'standard'], true) ? $_POST['pkg_tier'] : 'basic',
         ];
-        if ($pkg['name'] !== '') {
+        if ($pkg['tier'] === 'basic') $pkg['price'] = 0;   // Basic packages are always free
+        if ($pkg['tier'] === 'standard' && $pkg['price'] <= 0) {
+            $errors[] = 'Standard packages need a price — referrals pay it via the QR paywall.';
+        } elseif ($pkg['name'] !== '') {
             $res = supabase_request('POST', '/rest/v1/packages', $pkg, $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'create_package', 'package', null, 'Created: ' . $pkg['name']);
@@ -95,13 +101,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     if ($act === 'update_txn') {
         $txnId  = $_POST['txn_id'] ?? '';
         $status = in_array($_POST['txn_status'] ?? '', $txnStatusOptions, true) ? $_POST['txn_status'] : null;
-        if ($txnId && $status) {
+        $txn = $txnId ? fetch_activation_txn($token, $txnId) : null;
+        if ($txn && $txn['status'] === 'pending' && in_array($status, ['completed', 'failed'], true)) {
+            // A pending activation must go through approve/reject so the account tier follows the payment.
+            $err = $status === 'completed' ? approve_activation($token, $txnId, $profile['id']) : reject_activation($token, $txnId, $profile['id']);
+            if (!$err) { flash('success', $status === 'completed' ? 'Payment approved — account activated.' : 'Payment rejected.'); header('Location: /dashboard-admin.php#transactions'); exit; }
+            $errors[] = $err;
+        } elseif ($txnId && $status) {
             $res = supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($txnId), ['status' => $status], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'update_transaction', 'transaction', $txnId, 'Status → ' . $status);
                 flash('success', 'Transaction updated.'); header('Location: /dashboard-admin.php#transactions'); exit;
             }
             $errors[] = $res['error'];
+        }
+    }
+
+    if ($act === 'approve_payment' || $act === 'reject_payment') {
+        $txnId = (string) ($_POST['txn_id'] ?? '');
+        $err = $act === 'approve_payment'
+            ? approve_activation($token, $txnId, $profile['id'])
+            : reject_activation($token, $txnId, $profile['id'], trim((string) ($_POST['reason'] ?? '')));
+        if (!$err) {
+            flash('success', $act === 'approve_payment' ? 'Payment approved — account upgraded.' : 'Payment rejected. The user can submit again.');
+            header('Location: /dashboard-admin.php#approvals'); exit;
+        }
+        $errors[] = $err;
+    }
+
+    if ($act === 'save_payment') {
+        $ok = true;
+        if (!empty($_FILES['pay_qr']['tmp_name']) && is_uploaded_file($_FILES['pay_qr']['tmp_name'])) {
+            $mime = (@getimagesize($_FILES['pay_qr']['tmp_name']))['mime'] ?? '';
+            if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp', 'image/gif'], true)) {
+                $errors[] = 'QR code must be a PNG, JPG, WEBP or GIF image.'; $ok = false;
+            } elseif ($_FILES['pay_qr']['size'] > 400 * 1024) {
+                $errors[] = 'QR image must be under 400 KB.'; $ok = false;
+            } else {
+                $dataUri = 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($_FILES['pay_qr']['tmp_name']));
+                if ($saveErr = set_setting($token, 'payment_qr', $dataUri)) { $errors[] = $saveErr; $ok = false; }
+            }
+        }
+        if (!empty($_POST['pay_qr_remove'])) set_setting($token, 'payment_qr', null);
+        if ($ok) {
+            set_setting($token, 'payment_account', mb_substr(trim((string) ($_POST['pay_account'] ?? '')), 0, 200));
+            set_setting($token, 'payment_instructions', mb_substr(trim((string) ($_POST['pay_instructions'] ?? '')), 0, 1000));
+            audit_log($token, 'payment_settings', 'app_settings', null, 'Updated payment QR settings');
+            flash('success', 'Payment settings saved.'); header('Location: /dashboard-admin.php#payment'); exit;
         }
     }
 
@@ -130,11 +176,14 @@ $allRefs = is_array($refRes['body']) && !$refRes['error'] ? $refRes['body'] : []
 $pkgRes  = supabase_request('GET', '/rest/v1/packages?select=*&order=created_at.desc', null, $token);
 $allPkgs = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : [];
 
-$txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,email),packages!transactions_package_id_fkey(name)&order=created_at.desc', null, $token);
+$txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,username,email,phone),packages!transactions_package_id_fkey(name,tier)&order=created_at.desc', null, $token);
 $allTxns = is_array($txnRes['body']) && !$txnRes['error'] ? $txnRes['body'] : [];
 
 $csRes = supabase_request('GET', '/rest/v1/client_services?select=*,profiles!client_services_client_id_fkey(full_name,email)&order=started_at.desc', null, $token);
 $allCS = is_array($csRes['body']) && !$csRes['error'] ? $csRes['body'] : [];
+
+$pendingPayments = array_values(array_filter($allTxns, fn($t) => $t['type'] === 'activation' && $t['status'] === 'pending'));
+$pay = get_settings($token, ['payment_qr', 'payment_account', 'payment_instructions']);
 
 $logsRes = supabase_request('GET', '/rest/v1/system_logs?select=*,profiles!system_logs_actor_id_fkey(full_name)&order=created_at.desc&limit=100', null, $token);
 $allLogs = is_array($logsRes['body']) && !$logsRes['error'] ? $logsRes['body'] : [];
@@ -182,8 +231,17 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     <div class="card"><span class="label">04 // Revenue</span><div class="big green">$<?= number_format(array_sum(array_map(fn($t) => $t['type'] === 'activation' && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2) ?></div></div>
   </section>
 
+  <?php if ($pendingPayments): ?>
+    <div class="alert alert-warn"><strong><?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> waiting for approval.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
+  <?php endif; ?>
+  <?php if ($pay['payment_qr'] === ''): ?>
+    <div class="alert alert-warn">No payment QR code yet — referrals can't pay for Standard until you add one in the <a href="#payment" onclick="document.querySelector('.admin-tab[data-panel=payment]').click()">Payment tab</a>.</div>
+  <?php endif; ?>
+
   <div class="admin-tabs">
     <button class="admin-tab active" data-panel="users">Users</button>
+    <button class="admin-tab" data-panel="approvals">Approvals<?= $pendingPayments ? ' <span class="tab-count">' . count($pendingPayments) . '</span>' : '' ?></button>
+    <button class="admin-tab" data-panel="payment">Payment</button>
     <button class="admin-tab" data-panel="referrals">Referrals</button>
     <button class="admin-tab" data-panel="packages">Packages</button>
     <button class="admin-tab" data-panel="transactions">Transactions</button>
@@ -221,6 +279,58 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     </div>
   </div>
 
+  <!-- APPROVALS -->
+  <div id="panel-approvals" class="admin-panel">
+    <div class="card"><h2>Standard account requests</h2>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Check each reference number against your payment app before approving. Approving upgrades the user to the tier of the package they paid for and starts their countdown.</p>
+      <?php if (!$pendingPayments): ?><p class="empty">No payments waiting for approval.</p>
+      <?php else: ?><div class="table-scroll"><table>
+        <thead><tr><th>User</th><th>Package</th><th>Amount</th><th>Reference</th><th>Submitted</th><th>Decision</th></tr></thead>
+        <tbody><?php foreach ($pendingPayments as $t): ?>
+          <tr>
+            <td><strong><?= e($t['profiles']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($t['profiles']['username'] ?? '') ?><?= !empty($t['profiles']['phone']) ? ' · ' . e($t['profiles']['phone']) : '' ?></span></td>
+            <td><?= e($t['packages']['name'] ?? '—') ?><br><span class="role-badge <?= e(tier_role($t['packages']['tier'] ?? 'standard')) ?>"><?= e($t['packages']['tier'] ?? 'standard') ?></span></td>
+            <td style="color:var(--green);font-weight:600">$<?= number_format((float) $t['amount'], 2) ?></td>
+            <td style="font-family:var(--font);font-size:13px"><?= e($t['payment_ref'] ?? '—') ?></td>
+            <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($t['created_at'])) ?></td>
+            <td>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                <form method="post" class="inline-form" onsubmit="return confirm('Approve this payment and upgrade the account?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="approve_payment"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm btn-solid" type="submit">Approve</button></form>
+                <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="reject_payment"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><input name="reason" type="text" maxlength="200" placeholder="Reason (optional)" style="width:140px"><button class="btn btn-sm btn-danger" type="submit">Reject</button></form>
+              </div>
+            </td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div><?php endif; ?>
+    </div>
+  </div>
+
+  <!-- PAYMENT SETTINGS -->
+  <div id="panel-payment" class="admin-panel">
+    <div class="card"><h2>QR paywall</h2>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Referrals scan this QR code to pay for a Standard package, then enter their receipt reference for you to approve.</p>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="save_payment">
+        <div class="paywall-admin">
+          <div>
+            <?php if ($pay['payment_qr'] !== ''): ?>
+              <img class="paywall-qr" src="<?= e($pay['payment_qr']) ?>" alt="Current payment QR" width="200" height="200">
+              <label class="check" style="margin-top:8px"><input type="checkbox" name="pay_qr_remove" value="1"> Remove this QR</label>
+            <?php else: ?>
+              <div class="paywall-qr paywall-qr-empty">No QR yet</div>
+            <?php endif; ?>
+          </div>
+          <div style="flex:1;min-width:220px">
+            <div class="field"><label>QR image (PNG/JPG/WEBP, max 400 KB)</label><input type="file" name="pay_qr" accept="image/png,image/jpeg,image/webp,image/gif"></div>
+            <div class="field"><label>Account name / number</label><input name="pay_account" maxlength="200" value="<?= e($pay['payment_account']) ?>" placeholder="e.g. GCash · KAM Team · 0917 000 0000"></div>
+            <div class="field"><label>Instructions</label><textarea name="pay_instructions" rows="3" maxlength="1000" placeholder="e.g. Put your username in the payment note."><?= e($pay['payment_instructions']) ?></textarea></div>
+            <button class="btn btn-sm btn-solid" type="submit">Save payment settings →</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- REFERRALS -->
   <div id="panel-referrals" class="admin-panel">
     <div class="card"><h2>Referral network</h2>
@@ -249,7 +359,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           <tr>
             <td><strong><?= e($pk['name']) ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($pk['description'] ?? '') ?></span></td>
             <td><span class="role-badge <?= $pk['tier'] === 'standard' ? 'client_standard' : 'client_basic' ?>"><?= e($pk['tier']) ?></span></td>
-            <td>$<?= number_format((float) $pk['price'], 2) ?></td>
+            <td><?= $pk['tier'] === 'basic' ? '<span style="color:var(--green)">Free</span>' : '$' . number_format((float) $pk['price'], 2) ?></td>
             <td>$<?= number_format((float) $pk['commission_outright'], 2) ?></td>
             <td><?= e($pk['commission_unilevel']) ?>%</td>
             <td><?= $pk['active'] ? '<span style="color:var(--green)">Yes</span>' : '<span style="color:var(--red)">No</span>' ?></td>
@@ -259,7 +369,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <div class="assign-form"><h3>+ Create package</h3>
         <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="create_package">
           <div class="row" style="margin-bottom:10px"><div class="field"><label>Name</label><input name="pkg_name" required placeholder="Package name"></div><div class="field"><label>Tier</label><select name="pkg_tier"><option value="basic">Basic</option><option value="standard">Standard</option></select></div></div>
-          <div class="row" style="margin-bottom:10px"><div class="field"><label>Price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="0"></div><div class="field"><label>Outright ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="0"></div></div>
+          <div class="row" style="margin-bottom:10px"><div class="field"><label>Price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="0"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Outright ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="0"></div></div>
           <div class="row" style="margin-bottom:10px"><div class="field"><label>Unilevel (%)</label><input name="pkg_comm_uni" type="number" step="0.01" min="0" value="0"></div><div class="field"><label>Description</label><input name="pkg_desc" placeholder="Optional"></div></div>
           <button class="btn btn-sm btn-solid" type="submit">Create package →</button>
         </form>

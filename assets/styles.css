@@ -391,3 +391,33 @@ td { padding: 10px 8px 10px 0; border-bottom: 1px solid var(--border); vertical-
   .share { flex-direction: column; }
   .share .btn { width: 100%; }
 }
+
+/* ---------- Live lifecycle countdown ---------- */
+.countdown-card { margin-bottom: 12px; }
+.cd-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cd-expiry { font-size: 12px; color: var(--text-dim); }
+.cd-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 8px; }
+.cd-unit { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 6px; text-align: center; }
+.cd-num { display: block; font-family: var(--font-head); font-size: clamp(24px, 5vw, 38px); font-weight: 700; line-height: 1; color: var(--rust); font-variant-numeric: tabular-nums; }
+.cd-lbl { display: block; margin-top: 6px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim); }
+.cd-total { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+.countdown-card.is-expired .cd-num, .countdown-card.is-expired .cd-total { color: var(--red); }
+
+/* ---------- QR paywall ---------- */
+.tier-card { cursor: default; }
+.tier-cards { align-items: start; }
+.tier-card .tier-name { margin: 8px 0 0; font-family: var(--font-head); font-size: 20px; }
+.tier-card .tier-desc { margin: 0; font-size: 13px; color: var(--text-muted); }
+.paywall > summary { list-style: none; display: inline-flex; width: auto; cursor: pointer; }
+.paywall > summary::-webkit-details-marker { display: none; }
+.paywall[open] > summary { opacity: .55; }
+.paywall-body { margin-top: 14px; padding: 14px; background: var(--surface); border: 1px dashed var(--rust); border-radius: var(--radius); }
+.paywall-qr { display: block; width: 220px; max-width: 100%; height: auto; aspect-ratio: 1; object-fit: contain; margin: 10px 0; background: #fff; border: 1px solid var(--border-light); border-radius: var(--radius); padding: 8px; }
+.paywall-qr-empty { display: grid; place-items: center; width: 200px; color: var(--text-dim); font-size: 12px; }
+.paywall-acct { margin: 0; font-weight: 600; font-size: 14px; }
+.paywall-note { margin: 6px 0 0; font-size: 12px; color: var(--text-muted); }
+.paywall-admin { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+.pending-box { margin-top: 14px; padding: 18px; border: 1px solid var(--rust); border-radius: var(--radius); background: var(--orange-dim); }
+.pending-box h3 { margin: 8px 0 10px; font-family: var(--font-head); font-size: 20px; }
+.tab-count { display: inline-block; min-width: 18px; padding: 1px 6px; margin-left: 4px; border-radius: 999px; background: var(--orange); color: #1A1917; font-size: 10px; text-align: center; }
+@media (max-width: 480px) { .cd-grid { grid-template-columns: repeat(2, 1fr); } }

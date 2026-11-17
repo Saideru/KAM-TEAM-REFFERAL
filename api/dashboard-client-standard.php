@@ -55,17 +55,7 @@ $serviceMeta = [
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
 
-  <div class="card" style="margin-bottom:12px">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <span class="label">Lifecycle // 27 months base + 3 per referral</span>
-      <span style="font-size:12px;color:var(--rust)">+3 months per new referral</span>
-    </div>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;margin:8px 0 6px">
-      <span style="font-size:13px;color:var(--<?= $lifecycle['class'] === 'ok' ? 'green' : ($lifecycle['class'] === 'warn' ? 'yellow' : 'red') ?>)"><?= e($lifecycle['text']) ?></span>
-      <span style="font-size:12px;color:var(--text-dim)"><?= isset($lifecycle['expires']) ? 'Expires: ' . e($lifecycle['expires']) : '' ?></span>
-    </div>
-    <div class="lifecycle-bar"><div class="lifecycle-fill <?= e($lifecycle['class']) ?>" style="width:<?= $lifecycle['pct'] ?>%"></div></div>
-  </div>
+  <?= lifecycle_countdown($profile, 'Account active for // 27 months + 3 per referral') ?>
 
   <section class="grid">
     <div class="card"><span class="label">01 // Services</span><div class="big cyan"><?= $active ?></div></div>
@@ -159,5 +149,6 @@ $serviceMeta = [
       .finally(function () { btn.textContent = 'Copied ✓'; setTimeout(function () { btn.textContent = 'Copy →'; }, 1800); });
   });
 </script>
+<?= lifecycle_countdown_script() ?>
 </body>
 </html>
