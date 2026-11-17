@@ -65,14 +65,15 @@ function _clear_session(): void
 function supabase_configured(): bool
 {
     return strpos(SUPABASE_URL, 'YOUR-PROJECT-REF') === false
-        && strpos(SUPABASE_ANON_KEY, 'YOUR-ANON') === false;
+        && SUPABASE_SERVICE_KEY !== '';
 }
 
 function supabase_request(string $method, string $path, ?array $body = null, ?string $accessToken = null, array $extraHeaders = []): array
 {
+    $key     = $accessToken ?: (SUPABASE_SERVICE_KEY ?: SUPABASE_ANON_KEY);
     $headers = array_merge([
-        'apikey: ' . SUPABASE_ANON_KEY,
-        'Authorization: Bearer ' . ($accessToken ?: SUPABASE_ANON_KEY),
+        'apikey: ' . $key,
+        'Authorization: Bearer ' . $key,
         'Content-Type: application/json',
         'Accept: application/json',
     ], $extraHeaders);
@@ -113,63 +114,85 @@ function supabase_request(string $method, string $path, ?array $body = null, ?st
 // Auth
 // =====================================================================
 
-function supabase_sign_up(string $email, string $password, array $meta, string $redirectTo): array
+// Creates a profile row with a bcrypt password hash.
+// Returns ['error' => string|null, 'profile' => array|null].
+function supabase_sign_up(string $email, string $password, array $meta): array
 {
-    return supabase_request(
-        'POST',
-        '/auth/v1/signup?redirect_to=' . urlencode($redirectTo),
-        ['email' => $email, 'password' => $password, 'data' => $meta]
-    );
+    $email = strtolower(trim($email));
+
+    $exists = supabase_request('GET', '/rest/v1/profiles?select=id&email=eq.' . urlencode($email));
+    if (!empty($exists['body'])) {
+        return ['error' => 'An account with that email already exists.', 'profile' => null];
+    }
+
+    $referrer = null;
+    if (!empty($meta['ref'])) {
+        $r = supabase_request('GET', '/rest/v1/profiles?select=id&deleted_at=is.null&referral_code=eq.' . urlencode(strtoupper(trim($meta['ref']))));
+        $referrer = $r['body'][0]['id'] ?? null;
+    }
+
+    $role = in_array($meta['role'] ?? '', ['client_basic', 'client_standard', 'referral'], true)
+        ? $meta['role'] : 'referral';
+
+    $res = supabase_request('POST', '/rest/v1/profiles', [
+        'full_name'     => $meta['full_name'] ?? explode('@', $email)[0],
+        'email'         => $email,
+        'password_hash' => password_hash($password, PASSWORD_BCRYPT),
+        'phone'         => $meta['phone']   ?: null,
+        'company'       => $meta['company'] ?: null,
+        'referred_by'   => $referrer,
+        'role'          => $role,
+        'status'        => 'accepted',
+    ], null, ['Prefer: return=representation']);
+
+    if ($res['error']) {
+        return ['error' => $res['error'], 'profile' => null];
+    }
+    return ['error' => null, 'profile' => $res['body'][0] ?? null];
 }
 
+// Verifies the password against the stored bcrypt hash.
+// Returns ['error' => string|null, 'profile' => array|null].
 function supabase_sign_in(string $email, string $password): array
 {
-    return supabase_request('POST', '/auth/v1/token?grant_type=password', [
-        'email'    => $email,
-        'password' => $password,
-    ]);
+    $email = strtolower(trim($email));
+    $res   = supabase_request('GET', '/rest/v1/profiles?select=*&email=eq.' . urlencode($email));
+
+    if ($res['error']) {
+        return ['error' => 'Could not reach the database.', 'profile' => null];
+    }
+
+    $profile = $res['body'][0] ?? null;
+    if (!$profile || !password_verify($password, $profile['password_hash'] ?? '')) {
+        return ['error' => 'Invalid credentials.', 'profile' => null];
+    }
+    if (!empty($profile['deleted_at'])) {
+        return ['error' => 'Invalid credentials.', 'profile' => null];
+    }
+
+    return ['error' => null, 'profile' => $profile];
 }
 
-function supabase_store_session(array $auth): void
+function supabase_store_session(array $profile): void
 {
     $session = &_session();
     $session['sb'] = [
-        'access_token'  => $auth['access_token'],
-        'refresh_token' => $auth['refresh_token'],
-        'expires_at'    => time() + (int) ($auth['expires_in'] ?? 3600),
-        'user_id'       => $auth['user']['id'] ?? null,
-        'email'         => $auth['user']['email'] ?? null,
+        'user_id' => $profile['id'],
+        'email'   => $profile['email'],
     ];
     _save_session();
 }
 
+// Returns the service-role key when a user is signed in, so existing
+// callers that pass $token around keep working unchanged.
 function supabase_access_token(): ?string
 {
     $session = &_session();
-    if (empty($session['sb']['access_token'])) {
-        return null;
-    }
-    if (($session['sb']['expires_at'] ?? 0) - 60 > time()) {
-        return $session['sb']['access_token'];
-    }
-
-    $res = supabase_request('POST', '/auth/v1/token?grant_type=refresh_token', [
-        'refresh_token' => $session['sb']['refresh_token'] ?? '',
-    ]);
-    if ($res['error'] || empty($res['body']['access_token'])) {
-        supabase_sign_out_local();
-        return null;
-    }
-    supabase_store_session($res['body']);
-    return $session['sb']['access_token'];
+    return empty($session['sb']['user_id']) ? null : SUPABASE_SERVICE_KEY;
 }
 
 function supabase_sign_out(): void
 {
-    $session = &_session();
-    if (!empty($session['sb']['access_token'])) {
-        supabase_request('POST', '/auth/v1/logout', [], $session['sb']['access_token']);
-    }
     supabase_sign_out_local();
 }
 
@@ -204,6 +227,7 @@ function current_profile(?string $token = null): ?array
 
     $res = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($userId), null, $token);
     $cached = $res['body'][0] ?? false;
+    if ($cached) unset($cached['password_hash']);
     return $cached ?: null;
 }
 

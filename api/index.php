@@ -37,11 +37,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $res = supabase_sign_in($email, $pass);
             if ($res['error']) {
                 $errors[] = 'Invalid credentials.';
-                $errors[] = '[DEBUG] ' . $res['error'] . ' | status=' . $res['status'];
             } else {
-                supabase_store_session($res['body']);
-                $token = $res['body']['access_token'];
-                audit_log($token, 'login_success', 'user', $res['body']['user']['id'] ?? null, 'User signed in');
+                supabase_store_session($res['profile']);
+                audit_log(supabase_access_token(), 'login_success', 'user', $res['profile']['id'], 'User signed in');
                 redirect_by_role();
             }
         }
@@ -65,19 +63,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'company'   => $old['company'],
                 'ref'       => $ref,
                 'role'      => $old['role'],
-            ], APP_URL . '/index.php?confirmed=1');
+            ]);
 
             if ($res['error']) {
-                $errors[] = 'Invalid credentials.';
-            } elseif (!empty($res['body']['access_token'])) {
-                supabase_store_session($res['body']);
-                redirect_by_role('1');
-            } elseif (isset($res['body']['identities']) && $res['body']['identities'] === []) {
-                $errors[] = 'Invalid credentials.';
+                $errors[] = $res['error'];
             } else {
-                flash('success', 'Account created. Check ' . $email . ' for confirmation, then sign in.');
-                header('Location: /index.php');
-                exit;
+                supabase_store_session($res['profile']);
+                redirect_by_role('1');
             }
         }
     }

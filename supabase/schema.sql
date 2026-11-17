@@ -3,8 +3,11 @@
 -- Run in: Supabase Dashboard → SQL Editor → New query → Run
 -- =====================================================================
 
+-- Required for bcrypt password hashing
+create extension if not exists pgcrypto with schema extensions;
+
 -- ---------------------------------------------------------------------
--- 01 // PROFILES  (extends auth.users)
+-- 01 // PROFILES  (standalone — passwords stored here, no auth.users)
 -- Roles: admin | client_basic | client_standard | referral
 -- Status: pending | accepted | suspended
 -- ---------------------------------------------------------------------
@@ -16,9 +19,10 @@ drop table if exists public.packages cascade;
 drop table if exists public.profiles cascade;
 
 create table public.profiles (
-  id                  uuid primary key references auth.users (id) on delete cascade,
+  id                  uuid primary key default gen_random_uuid(),
   full_name           text not null,
   email               text not null unique,
+  password_hash       text not null,
   phone               text,
   company             text,
   referral_code       text not null unique,
@@ -131,30 +135,6 @@ create index system_logs_created_idx on public.system_logs (created_at desc);
 -- ---------------------------------------------------------------------
 -- 07 // HELPER FUNCTIONS
 -- ---------------------------------------------------------------------
-create or replace function public.is_admin()
-returns boolean
-language sql stable security definer set search_path = ''
-as $$
-  select exists (
-    select 1 from public.profiles
-    where id = auth.uid() and role = 'admin' and status = 'accepted' and deleted_at is null
-  );
-$$;
-
-create or replace function public.user_role()
-returns text
-language sql stable security definer set search_path = ''
-as $$
-  select role from public.profiles where id = auth.uid() and deleted_at is null;
-$$;
-
-create or replace function public.user_status()
-returns text
-language sql stable security definer set search_path = ''
-as $$
-  select status from public.profiles where id = auth.uid() and deleted_at is null;
-$$;
-
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql set search_path = ''
 as $$
@@ -191,62 +171,57 @@ create trigger referrals_extend_lifecycle
   after insert on public.referrals
   for each row execute function public.extend_lifecycle_on_referral();
 
--- Handle new user registration
-create or replace function public.handle_new_user()
-returns trigger language plpgsql security definer set search_path = ''
+-- Auto-generate referral code on profile insert
+create or replace function public.gen_referral_code()
+returns trigger language plpgsql set search_path = ''
 as $$
 declare
-  new_code   text;
-  referrer   uuid;
-  new_role   text;
+  new_code text;
 begin
-  loop
-    new_code := 'KT-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 6));
-    exit when not exists (select 1 from public.profiles where referral_code = new_code);
-  end loop;
-
-  if coalesce(new.raw_user_meta_data ->> 'ref', '') <> '' then
-    select id into referrer
-    from public.profiles
-    where referral_code = upper(trim(new.raw_user_meta_data ->> 'ref'))
-      and deleted_at is null;
+  if new.referral_code is null or new.referral_code = '' then
+    loop
+      new_code := 'KT-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 6));
+      exit when not exists (select 1 from public.profiles where referral_code = new_code);
+    end loop;
+    new.referral_code := new_code;
   end if;
-
-  new_role := coalesce(nullif(new.raw_user_meta_data ->> 'role', ''), 'referral');
-  if new_role not in ('client_basic', 'client_standard', 'referral') then
-    new_role := 'referral';
-  end if;
-
-  insert into public.profiles (id, full_name, email, phone, company, referral_code, referred_by, role, status)
-  values (
-    new.id,
-    coalesce(nullif(new.raw_user_meta_data ->> 'full_name', ''), split_part(new.email, '@', 1)),
-    new.email,
-    nullif(new.raw_user_meta_data ->> 'phone', ''),
-    nullif(new.raw_user_meta_data ->> 'company', ''),
-    new_code,
-    referrer,
-    new_role,
-    'pending'
-  );
-
-  -- Create referral link record if referred by someone
-  if referrer is not null then
-    insert into public.referrals (referrer_id, referred_id, status)
-    values (referrer, new.id, 'pending');
-  end if;
-
   return new;
 end;
 $$;
 
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute function public.handle_new_user();
+drop trigger if exists profiles_gen_referral_code on public.profiles;
+create trigger profiles_gen_referral_code
+  before insert on public.profiles
+  for each row execute function public.gen_referral_code();
+
+-- Create the referral tree record when a profile is referred by someone
+create or replace function public.link_referral()
+returns trigger language plpgsql security definer set search_path = ''
+as $$
+begin
+  if new.referred_by is not null then
+    insert into public.referrals (referrer_id, referred_id, status)
+    values (new.referred_by, new.id, 'pending')
+    on conflict (referrer_id, referred_id) do nothing;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_link_referral on public.profiles;
+create trigger profiles_link_referral
+  after insert on public.profiles
+  for each row execute function public.link_referral();
 
 -- ---------------------------------------------------------------------
--- 08 // ROW LEVEL SECURITY
+-- 08 // ROW LEVEL SECURITY — deny-all to anon/authenticated
+--
+-- Authentication happens in PHP (password_hash in profiles), so there is
+-- no auth.uid() to write policies against. RLS is left ON with no
+-- policies, which denies every request made with the public anon key.
+-- The app reaches these tables with the service-role key from the PHP
+-- server only, which bypasses RLS; access control lives in require_role().
+-- Never expose the service-role key to the browser.
 -- ---------------------------------------------------------------------
 alter table public.profiles        enable row level security;
 alter table public.referrals       enable row level security;
@@ -254,85 +229,6 @@ alter table public.client_services enable row level security;
 alter table public.packages        enable row level security;
 alter table public.transactions    enable row level security;
 alter table public.system_logs     enable row level security;
-
--- Profiles
-create policy "profiles_select" on public.profiles
-  for select to authenticated
-  using (id = auth.uid() or (select public.is_admin()));
-
-create policy "profiles_update_own" on public.profiles
-  for update to authenticated
-  using (id = auth.uid())
-  with check (id = auth.uid());
-
-create policy "profiles_admin_update" on public.profiles
-  for update to authenticated
-  using ((select public.is_admin()))
-  with check ((select public.is_admin()));
-
-revoke update on public.profiles from authenticated;
-grant update (full_name, phone, company, role, status, lifecycle_expires_at, deleted_at) on public.profiles to authenticated;
-
--- Packages: everyone reads active, admins manage
-create policy "packages_select" on public.packages
-  for select to authenticated using (true);
-
-create policy "packages_admin_insert" on public.packages
-  for insert to authenticated with check ((select public.is_admin()));
-
-create policy "packages_admin_update" on public.packages
-  for update to authenticated
-  using ((select public.is_admin())) with check ((select public.is_admin()));
-
-create policy "packages_admin_delete" on public.packages
-  for delete to authenticated using ((select public.is_admin()));
-
--- Transactions: own or admin
-create policy "transactions_select" on public.transactions
-  for select to authenticated
-  using (user_id = auth.uid() or (select public.is_admin()));
-
-create policy "transactions_insert" on public.transactions
-  for insert to authenticated
-  with check (user_id = auth.uid() or (select public.is_admin()));
-
-create policy "transactions_admin_update" on public.transactions
-  for update to authenticated
-  using ((select public.is_admin())) with check ((select public.is_admin()));
-
--- Referrals: own or admin
-create policy "referrals_select" on public.referrals
-  for select to authenticated
-  using (referrer_id = auth.uid() or referred_id = auth.uid() or (select public.is_admin()));
-
-create policy "referrals_admin_insert" on public.referrals
-  for insert to authenticated with check (true);
-
-create policy "referrals_admin_update" on public.referrals
-  for update to authenticated
-  using ((select public.is_admin())) with check ((select public.is_admin()));
-
--- Client services
-create policy "client_services_select" on public.client_services
-  for select to authenticated
-  using (client_id = auth.uid() or (select public.is_admin()));
-
-create policy "client_services_admin_insert" on public.client_services
-  for insert to authenticated with check ((select public.is_admin()));
-
-create policy "client_services_admin_update" on public.client_services
-  for update to authenticated
-  using ((select public.is_admin())) with check ((select public.is_admin()));
-
-create policy "client_services_admin_delete" on public.client_services
-  for delete to authenticated using ((select public.is_admin()));
-
--- System logs: admins only (insert open for logging functions)
-create policy "system_logs_admin_select" on public.system_logs
-  for select to authenticated using ((select public.is_admin()));
-
-create policy "system_logs_insert" on public.system_logs
-  for insert to authenticated with check (true);
 
 -- ---------------------------------------------------------------------
 -- 09 // SEED DEFAULT PACKAGES
@@ -344,9 +240,16 @@ insert into public.packages (name, description, price, commission_outright, comm
   ('AI Implementation','AI workflow automation package',       299.00, 60.00, 12.00,'standard');
 
 -- ---------------------------------------------------------------------
--- 10 // ADMIN ACCOUNTS — Run seed-admins.php after schema setup
--- Admins: Michael, Azi, Siedel (password: Numbers 2020)
--- They are created via the Supabase Auth API in seed-admins.php,
--- then promoted here. Run this AFTER seed-admins.php:
+-- 10 // ADMIN ACCOUNTS — Michael, Azi, Siedel (password: Numbers20:20)
+-- bcrypt hashes, verified in PHP with password_verify()
 -- ---------------------------------------------------------------------
--- UPDATE public.profiles SET role = 'admin', status = 'accepted' WHERE email IN ('michael@kam-team.com', 'azi@kam-team.com', 'siedel@kam-team.com');
+insert into public.profiles (full_name, email, password_hash, role, status)
+values
+  ('Michael', 'michael@kam-team.com', extensions.crypt('Numbers20:20', extensions.gen_salt('bf')), 'admin', 'accepted'),
+  ('Azi',     'azi@kam-team.com',     extensions.crypt('Numbers20:20', extensions.gen_salt('bf')), 'admin', 'accepted'),
+  ('Siedel',  'siedel@kam-team.com',  extensions.crypt('Numbers20:20', extensions.gen_salt('bf')), 'admin', 'accepted')
+on conflict (email) do update
+set password_hash = excluded.password_hash,
+    role          = 'admin',
+    status        = 'accepted',
+    deleted_at    = null;
