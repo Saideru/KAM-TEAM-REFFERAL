@@ -712,7 +712,6 @@ alter table public.client_reports      enable row level security;
 -- =====================================================================
 -- 13) Staff / employee accounts (migrations/20261122_staff_role.sql)
 -- =====================================================================
-alter table public.profiles add column if not exists job_title text;
 alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles add constraint profiles_role_check
   check (role in ('admin', 'staff', 'client', 'affiliate'));

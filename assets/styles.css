@@ -506,14 +506,19 @@ section[id], div[id="overview"] { scroll-margin-top: 16px; }
 
 /* ---------- Program terms checklist (sign-up + /terms.php) ---------- */
 .terms-checklist .terms-meta { margin: 0 0 10px; font-size: 11px; line-height: 1.4; color: var(--text-dim); font-family: var(--font); }
-.terms-item { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface-2); padding: 8px 10px; margin-bottom: 6px; }
-.terms-item.done { border-color: var(--rust); background: var(--orange-dim); }
-.terms-item .terms { flex: 1; margin: 0; font-size: 13px; line-height: 1.35; color: var(--text); align-items: center; cursor: pointer; }
-.terms-item .terms input { margin-top: 0; }
-.terms-item .terms input:disabled + span { color: var(--text-dim); }
-.terms-open { flex: none; font: 600 11px var(--font); letter-spacing: .04em; color: var(--rust); background: none; border: 1px solid rgba(184, 66, 15, .35); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
-.terms-open:hover { background: var(--orange-dim); }
-.terms-progress { margin: 6px 0 0; font-size: 11px; color: var(--text-dim); }
+.terms-sections { margin: 0 0 12px; padding: 0; list-style: none; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface-2); }
+.terms-sections li { display: flex; gap: 4px; padding: 7px 12px; font-size: 13px; line-height: 1.35; color: var(--text); border-top: 1px solid var(--border-light); }
+.terms-sections li:first-child { border-top: 0; }
+.terms-sections b { flex: none; width: 46px; padding-top: 2px; font: 600 11px var(--font); color: var(--rust); }
+.terms-read { margin-bottom: 12px; }
+.terms-accept { margin: 0; padding: 10px 12px; border: 1px solid var(--border-light); border-radius: var(--radius); font-size: 13px; line-height: 1.4; color: var(--text); cursor: pointer; }
+.terms-accept input:disabled + span { color: var(--text-dim); }
+.terms-checklist.done .terms-accept { border-color: var(--rust); background: var(--orange-dim); }
+.terms-progress { margin: 8px 0 0; font-size: 11px; color: var(--text-dim); }
+.terms-checklist.done .terms-progress { visibility: hidden; }
+.terms-dlg-body section { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px dashed var(--border-light); }
+.terms-dlg-body section:last-child { border-bottom: 0; margin-bottom: 0; }
+.terms-dlg-body h4 { margin: 0 0 8px; font-size: 14px; color: var(--text); }
 
 .terms-dialog { width: min(560px, calc(100vw - 32px)); max-height: min(80vh, 640px); padding: 0; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--bg); color: var(--text); box-shadow: 0 20px 60px rgba(0, 0, 0, .25); }
 .terms-dialog[open] { display: flex; flex-direction: column; }

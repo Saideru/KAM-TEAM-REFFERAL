@@ -665,7 +665,6 @@ function create_team_account(string $token, array $in): ?string
         'email'         => $email ?: null,
         'password_hash' => password_hash($pw, PASSWORD_BCRYPT),
         'phone'         => mb_substr(trim((string) ($in['phone'] ?? '')), 0, 40) ?: null,
-        'job_title'     => mb_substr(trim((string) ($in['job_title'] ?? '')), 0, 80) ?: null,
         'role'          => $role,
         'status'        => 'accepted',
     ], $token, ['Prefer: return=representation']);
@@ -673,7 +672,7 @@ function create_team_account(string $token, array $in): ?string
 
     $new = $res['body'][0];
     audit_log($token, 'staff_created', 'profile', $new['id'],
-        role_name($role) . ' account for ' . $new['full_name'] . ' (@' . $username . ')' . (!empty($new['job_title']) ? ' — ' . $new['job_title'] : ''));
+        role_name($role) . ' account for ' . $new['full_name'] . ' (@' . $username . ')');
     notify($token, 'Welcome to KAM TEAM', 'Your ' . role_name($role) . ' account is ready.', $new['id'], 'all', dashboard_url($role));
     return null;
 }

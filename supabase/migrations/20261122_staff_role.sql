@@ -7,7 +7,6 @@
 -- delivering a client report stays with admins.
 -- =====================================================================
 
-alter table public.profiles add column if not exists job_title text;
 
 alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles add constraint profiles_role_check

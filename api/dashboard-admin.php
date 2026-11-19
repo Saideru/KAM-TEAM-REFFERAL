@@ -117,9 +117,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         // A blank expiry leaves the lifecycle alone. Clearing it has to be
         // deliberate, otherwise editing a phone number would hand a Basic
         // client unlimited access.
-        if (array_key_exists('job_title', $_POST)) {
-            $patch['job_title'] = mb_substr(trim((string) $_POST['job_title']), 0, 80) ?: null;
-        }
         if (array_key_exists('affiliate_tier', $_POST)) {
             $patch['affiliate_tier'] = in_array($_POST['affiliate_tier'], ['basic', 'standard'], true) ? $_POST['affiliate_tier'] : null;
         }
@@ -472,7 +469,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>A</text></svg>">
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261120b">
 </head>
 <body>
 <header class="topbar">
@@ -532,7 +529,6 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <div class="row"><div class="field"><label>Full name</label><input name="full_name" required value="<?= e($editUser['full_name']) ?>"></div><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($editUser['username']) ?>"></div></div>
         <div class="row"><div class="field"><label>Email</label><input name="email" type="email" value="<?= e($editUser['email'] ?? '') ?>"></div><div class="field"><label>Phone</label><input name="phone" value="<?= e($editUser['phone'] ?? '') ?>"></div></div>
         <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Growth Partner term expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty to keep it as it is. Client and admin accounts never expire.</div><label class="check" style="margin-top:6px"><input type="checkbox" name="lifecycle_clear" value="1"> Remove the expiry</label></div></div>
-        <?php if (is_team($editUser)): ?><div class="row"><div class="field"><label>Position / job title</label><input name="job_title" maxlength="80" value="<?= e($editUser['job_title'] ?? '') ?>"></div><div class="field"></div></div><?php endif; ?>
         <?php if ($editUser['role'] === 'affiliate'): ?><div class="row"><div class="field"><label>Growth Partner plan</label><select name="affiliate_tier"><option value="">No plan yet</option><option value="basic" <?= ($editUser['affiliate_tier'] ?? '') === 'basic' ? 'selected' : '' ?>>Basic</option><option value="standard" <?= ($editUser['affiliate_tier'] ?? '') === 'standard' ? 'selected' : '' ?>>Standard</option></select></div><div class="field"></div></div><?php endif; ?>
         <div class="row"><div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave empty to keep current"></div><div class="field"><label>Role / status</label><div class="hint" style="margin-top:10px">Change these with the selectors in the table below.</div></div></div>
         <button class="btn btn-sm btn-solid" type="submit">Save user →</button>
@@ -553,12 +549,11 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <summary><h2>+ Register staff / employee</h2><span class="hint">Creates an approved account right away — no application, no program terms, no expiry.</span></summary>
       <form method="post" autocomplete="off"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="create_staff">
         <div class="row"><div class="field"><label>Full name</label><input name="full_name" required maxlength="120" value="<?= e($sp['full_name'] ?? '') ?>"></div>
-          <div class="field"><label>Position / job title</label><input name="job_title" maxlength="80" placeholder="e.g. Virtual Assistant, SEO Specialist, QA" value="<?= e($sp['job_title'] ?? '') ?>"></div></div>
-        <div class="row"><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" title="3–20 letters, numbers or underscores" value="<?= e($sp['username'] ?? '') ?>"></div>
-          <div class="field"><label>Access</label><select name="role">
+          <div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" title="3–20 letters, numbers or underscores" value="<?= e($sp['username'] ?? '') ?>"></div></div>
+        <div class="row"><div class="field"><label>Access</label><select name="role">
             <option value="staff" <?= ($sp['role'] ?? 'staff') === 'staff' ? 'selected' : '' ?>>Staff — client work &amp; task logs</option>
             <option value="admin" <?= ($sp['role'] ?? '') === 'admin' ? 'selected' : '' ?>>Admin — full admin dashboard</option>
-          </select></div></div>
+          </select></div><div class="field"></div></div>
         <div class="row"><div class="field"><label>Work email</label><input name="email" type="email" value="<?= e($sp['email'] ?? '') ?>"></div>
           <div class="field"><label>Phone</label><input name="phone" maxlength="40" value="<?= e($sp['phone'] ?? '') ?>"></div></div>
         <div class="row"><div class="field"><label>Temporary password</label><input name="password" type="password" required minlength="8" autocomplete="new-password"></div>
@@ -576,7 +571,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           <tr style="<?= $deleted ? 'opacity:.5' : '' ?>">
             <td><strong><?= e($p['full_name']) ?></strong><?= $deleted ? ' <span style="color:var(--red)">[DEL]</span>' : '' ?></td>
             <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
-            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'affiliate' ? '<br><span class="hint">' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?><?= is_team($p) && !empty($p['job_title']) ? '<br><span class="hint">' . e($p['job_title']) . '</span>' : '' ?></td>
+            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'affiliate' ? '<br><span class="hint">' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
             <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
             <td style="font-size:12px"><?php if ($p['role'] !== 'affiliate'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>—<?php else: $st = affiliate_state($p); ?><?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
