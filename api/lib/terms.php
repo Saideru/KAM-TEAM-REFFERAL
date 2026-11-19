@@ -96,36 +96,65 @@ function client_ip(): string
 
 // The checklist block shown at sign-up and on /terms.php.
 // $checked: the posted terms[] values, to keep ticks after a failed submit.
+// Each section is one compact row: a "Read" button that opens the section
+// in a popup, and a short checkbox that stays locked until that popup has
+// been opened and scrolled to the end. "I agree" in the popup ticks it.
 function terms_checklist(array $checked, string $kicker = '04 // Program terms'): string
 {
-    $items = '';
+    $entries = [];
     foreach (terms_sections() as $key => $sec) {
-        $ok = !empty($checked[$key]);
         $rules = '';
         foreach ($sec['rules'] as $rule) $rules .= '<li>' . e($rule) . '</li>';
-        $items .= '<div class="terms-item' . ($ok ? ' done' : '') . '"><details>'
-            . '<summary><span class="terms-num">§' . e($sec['number']) . '</span> ' . e($sec['title']) . ' <span class="terms-read">Read</span></summary>'
-            . '<ul>' . $rules . '</ul></details>'
-            . '<label class="terms"><input type="checkbox" name="terms[' . e($key) . ']" value="1"' . ($ok ? ' checked' : '') . '><span>' . e($sec['agree']) . '</span></label></div>';
+        $entries[$key] = ['label' => '§' . $sec['number'] . ' ' . $sec['title'], 'body' => '<ul>' . $rules . '</ul>', 'agree' => $sec['agree']];
     }
-    $sig = !empty($checked['signature']);
+    $entries['signature'] = ['label' => 'E-signature & consent (Appendix A)', 'body' => '<p>' . e(TERMS_SIGNATURE) . '</p>', 'agree' => 'I sign electronically and agree to all of the terms above.'];
+
+    $rows = $dialogs = '';
+    foreach ($entries as $key => $en) {
+        $ok = !empty($checked[$key]);   // re-shown after a failed submit: already read
+        $rows .= '<div class="terms-item' . ($ok ? ' done' : '') . '">'
+            . '<label class="terms"><input type="checkbox" name="terms[' . e($key) . ']" value="1" data-terms="' . e($key) . '"' . ($ok ? ' checked' : ' disabled') . '>'
+            . '<span>I have read and accept <strong>' . e($en['label']) . '</strong></span></label>'
+            . '<button type="button" class="terms-open" data-open="' . e($key) . '">' . ($ok ? 'Read again' : 'Read') . '</button></div>';
+        $dialogs .= '<dialog class="terms-dialog" id="terms-dlg-' . e($key) . '" aria-labelledby="terms-ttl-' . e($key) . '">'
+            . '<div class="terms-dlg-head"><span class="label">' . e(TERMS_PROGRAM) . ' · v' . e(TERMS_VERSION) . '</span><h3 id="terms-ttl-' . e($key) . '">' . e($en['label']) . '</h3></div>'
+            . '<div class="terms-dlg-body">' . $en['body'] . '<p class="terms-dlg-agree">' . e($en['agree']) . '</p></div>'
+            . '<div class="terms-dlg-foot"><span class="terms-dlg-hint">Scroll to the end to continue</span>'
+            . '<button type="button" class="btn btn-sm btn-ghost" data-close>Close</button>'
+            . '<button type="button" class="btn btn-sm btn-solid" data-agree="' . e($key) . '" disabled>I agree</button></div></dialog>';
+    }
+
     return '<fieldset class="biz-fieldset terms-checklist" id="terms-checklist">'
-        . '<legend><span class="label kicker">' . e($kicker) . '</span>Read and accept each section before continuing.</legend>'
-        . '<p class="terms-meta">' . e(TERMS_PROGRAM) . ' · Manual v' . e(TERMS_VERSION) . ' · Effective ' . e(TERMS_EFFECTIVE) . ' · Governed by the laws of the Republic of the Philippines</p>'
-        . $items
-        . '<div class="terms-item terms-sign' . ($sig ? ' done' : '') . '"><label class="terms"><input type="checkbox" name="terms[signature]" value="1"' . ($sig ? ' checked' : '') . '><span><strong>E-signature.</strong> ' . e(TERMS_SIGNATURE) . '</span></label></div>'
-        . '<p class="terms-progress" aria-live="polite"><span id="terms-count">0</span> of ' . (count(TERMS_SECTIONS) + 1) . ' accepted. We record the date, time, IP address and version you accept.</p>'
+        . '<legend><span class="label kicker">' . e($kicker) . '</span>Open and read each section, then accept it.</legend>'
+        . '<p class="terms-meta">' . e(TERMS_PROGRAM) . ' · Manual v' . e(TERMS_VERSION) . ' · Effective ' . e(TERMS_EFFECTIVE) . ' · Philippine law</p>'
+        . $rows
+        . '<p class="terms-progress" aria-live="polite"><span id="terms-count">0</span> of ' . count($entries) . ' accepted. We record the date, time, IP address and version you accept.</p>'
+        . $dialogs
         . '</fieldset>';
 }
 
-// Counts ticks and keeps $submitId disabled until every item is accepted.
+// Popups, read-before-accept locking, progress count, and keeps $submitId
+// disabled until every item is accepted.
 function terms_checklist_script(string $submitId): string
 {
-    return '<script>(function(){var boxes=document.querySelectorAll("#terms-checklist input[type=checkbox]"),'
-        . 'submit=document.getElementById(' . json_encode($submitId) . ');function refresh(){var n=0;'
-        . 'boxes.forEach(function(b){b.closest(".terms-item").classList.toggle("done",b.checked);if(b.checked)n++;});'
+    return '<script>(function(){'
+        . 'var root=document.getElementById("terms-checklist"),boxes=root.querySelectorAll("input[data-terms]"),submit=document.getElementById(' . json_encode($submitId) . ');'
+        . 'function refresh(){var n=0;boxes.forEach(function(b){b.closest(".terms-item").classList.toggle("done",b.checked);if(b.checked)n++;});'
         . 'document.getElementById("terms-count").textContent=n;submit.disabled=n<boxes.length;}'
-        . 'boxes.forEach(function(b){b.addEventListener("change",refresh);});refresh();})();</script>';
+        . 'function box(k){return root.querySelector("input[data-terms=\""+k+"\"]");}'
+        . 'root.querySelectorAll("[data-open]").forEach(function(btn){btn.addEventListener("click",function(){'
+        .   'var d=document.getElementById("terms-dlg-"+btn.dataset.open),body=d.querySelector(".terms-dlg-body"),ok=d.querySelector("[data-agree]");'
+        .   'function check(){if(body.scrollTop+body.clientHeight>=body.scrollHeight-8){ok.disabled=false;d.classList.add("is-read");}}'
+        .   'body.addEventListener("scroll",check);d.showModal?d.showModal():d.setAttribute("open","");body.scrollTop=0;check();});});'
+        . 'root.querySelectorAll("dialog").forEach(function(d){'
+        .   'd.querySelector("[data-close]").addEventListener("click",function(){d.close?d.close():d.removeAttribute("open");});'
+        .   'd.addEventListener("click",function(e){if(e.target===d&&d.close)d.close();});'
+        .   'd.querySelector("[data-agree]").addEventListener("click",function(){var k=this.dataset.agree,b=box(k);'
+        .     'b.disabled=false;b.checked=true;root.querySelector("[data-open=\""+k+"\"]").textContent="Read again";d.close?d.close():d.removeAttribute("open");refresh();});});'
+        // A locked box explains why instead of silently doing nothing.
+        . 'boxes.forEach(function(b){b.closest("label").addEventListener("click",function(e){if(b.disabled){e.preventDefault();root.querySelector("[data-open=\""+b.dataset.terms+"\"]").click();}});'
+        .   'b.addEventListener("change",refresh);});'
+        . 'refresh();})();</script>';
 }
 
 // Only the known checklist keys from a POST.
