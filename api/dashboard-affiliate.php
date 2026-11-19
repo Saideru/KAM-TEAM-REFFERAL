@@ -142,6 +142,9 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
       You have until <strong><?= date('M j, Y', $graceEnds) ?></strong> to save it —
       <?= $tier === 'basic' ? 'refer 1 Qualified Client (+3 months) or upgrade to Standard for US$100.' : 'renew for US$100.' ?>
       After that the account is terminated, Pending commissions are forfeited and your Level 1 Growth Partners roll up to your upline.</div>
+  <?php elseif ($state === 'active' && $tier === 'basic' && ($daysLeft = (int) ceil((strtotime($profile['lifecycle_expires_at']) - time()) / 86400)) <= EXPIRY_NOTICE_DAYS): ?>
+    <div class="alert alert-warn"><strong>Only <?= $daysLeft ?> day<?= $daysLeft === 1 ? '' : 's' ?> left on your Basic account</strong> (ends <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>).
+      To keep it, find a client — when a client you referred pays their deposit you get +3 months — or <a href="#plans">upgrade to Standard for US$100</a> (+2 years).</div>
   <?php endif; ?>
 
   <?php if ($tier): ?>

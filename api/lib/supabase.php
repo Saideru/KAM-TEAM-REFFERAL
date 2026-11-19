@@ -365,6 +365,8 @@ function require_role(string|array $allowed): array
         exit;
     }
 
+    if ($role === 'affiliate') remind_basic_expiry($profile);
+
     return ['token' => $token, 'profile' => $profile];
 }
 
@@ -455,6 +457,37 @@ function affiliate_grace_ends(array $p): ?int
 {
     if (empty($p['affiliate_tier']) || empty($p['lifecycle_expires_at'])) return null;
     return strtotime($p['lifecycle_expires_at']) + (AFFILIATE_GRACE_DAYS[$p['affiliate_tier']] ?? 7) * 86400;
+}
+
+const EXPIRY_NOTICE_DAYS = 7;
+
+// Basic Growth Partners get a notification once their term has 7 days or
+// less left (and again when it lapses into the 7-day grace period): refer a
+// client or upgrade to Standard for US$100. Each notice is sent once per
+// term — the link carries the expiry date, so an extended term starts over.
+function remind_basic_expiry(array $p): void
+{
+    if (($p['affiliate_tier'] ?? '') !== 'basic' || empty($p['lifecycle_expires_at'])) return;
+    $exp   = strtotime($p['lifecycle_expires_at']);
+    $state = affiliate_state($p);
+    $left  = (int) ceil(($exp - time()) / 86400);
+
+    if ($state === 'active' && $left <= EXPIRY_NOTICE_DAYS) {
+        $kind  = 'expiring';
+        $title = 'Only ' . $left . ' day' . ($left === 1 ? '' : 's') . ' left on your Basic account';
+        $body  = 'Your Basic Growth Partner term ends on ' . date('M j, Y', $exp) . '. To keep it, find a client — when a client you referred pays their deposit you get +3 months — or upgrade to Standard for US$100 (+2 years).';
+    } elseif ($state === 'grace') {
+        $kind  = 'grace';
+        $title = 'Your Basic account has expired — save it by ' . date('M j', affiliate_grace_ends($p));
+        $body  = 'Find a client who pays their deposit, or upgrade to Standard for US$100, before ' . date('M j, Y', affiliate_grace_ends($p)) . '. After that the account is terminated and Pending commissions are forfeited.';
+    } else {
+        return;
+    }
+
+    $link = '/dashboard-affiliate.php?notice=' . $kind . '-' . date('Ymd', $exp) . '#plans';
+    $sent = supabase_request('GET', '/rest/v1/notifications?select=id&limit=1&user_id=eq.' . urlencode($p['id']) . '&link=eq.' . rawurlencode($link), null, SUPABASE_SERVICE_KEY);
+    if (!is_array($sent['body']) || $sent['error'] || $sent['body']) return;   // already sent (or can't tell)
+    notify(SUPABASE_SERVICE_KEY, $title, $body, $p['id'], 'all', $link);
 }
 
 // New expiry after an approved Basic or Standard plan payment.
