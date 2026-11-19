@@ -792,15 +792,15 @@ function notif_bell(string $token, array $profile, string $csrf): string
 // Scheduled package changes (1-7 day notice, then permanent)
 // =====================================================================
 
-const PACKAGE_FIELDS = ['name', 'description', 'price', 'commission_outright', 'commission_unilevel', 'tier', 'active'];
+const PACKAGE_FIELDS = ['name', 'description', 'price', 'monthly_price', 'commission_outright', 'commission_unilevel', 'tier', 'active'];
 
 function describe_package_changes(array $old, array $new): string
 {
-    $label = ['name' => 'Name', 'description' => 'Description', 'price' => 'Price', 'commission_outright' => 'Outright commission',
-              'commission_unilevel' => 'Unilevel %', 'tier' => 'Tier', 'active' => 'Availability'];
+    $label = ['name' => 'Name', 'description' => 'Description', 'price' => 'One-time price', 'monthly_price' => 'Monthly fee',
+              'commission_outright' => 'Outright commission', 'commission_unilevel' => 'Unilevel %', 'tier' => 'Tier', 'active' => 'Availability'];
     $fmt = function (string $k, $v): string {
         if ($k === 'active') return $v ? 'available' : 'hidden';
-        if (in_array($k, ['price', 'commission_outright'], true)) return '$' . number_format((float) $v, 2);
+        if (in_array($k, ['price', 'monthly_price', 'commission_outright'], true)) return '$' . number_format((float) $v, 2);
         if ($k === 'commission_unilevel') return rtrim(rtrim(number_format((float) $v, 2), '0'), '.') . '%';
         return (string) ($v ?? '—');
     };

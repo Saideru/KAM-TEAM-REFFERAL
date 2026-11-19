@@ -171,6 +171,7 @@ $earned      = array_sum(array_map(fn($c) => (float) $c['amount'], $commissions)
             <span class="label" style="color:var(--<?= $std ? 'orange' : 'green' ?>)"><?= $std ? 'Standard' : 'Basic' ?> plan</span>
             <h3 class="tier-name"><?= e($pk['name']) ?></h3>
             <div class="tier-price <?= $std ? 'orange' : '' ?>" style="<?= $std ? '' : 'color:var(--green)' ?>"><?= $std ? '$' . number_format((float) $pk['price'], 2) : 'Free' ?></div>
+            <?php if ($std && (float) ($pk['monthly_price'] ?? 0) > 0): ?><p class="tier-desc" style="margin-top:-4px">One-time setup · then <strong>$<?= number_format((float) $pk['monthly_price'], 2) ?>/month</strong></p><?php endif; ?>
             <?php if (!empty($pk['description'])): ?><p class="tier-desc"><?= e($pk['description']) ?></p><?php endif; ?>
             <?php if (isset($upcoming[$pk['id']])): $up = $upcoming[$pk['id']]; ?><p class="tier-upcoming">Changing <?= date('M j, Y', strtotime($up['effective_at'])) ?>: <?= e($up['summary']) ?></p><?php endif; ?>
             <ul class="tier-features">

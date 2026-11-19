@@ -195,12 +195,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             $new = [
                 'name' => trim((string) ($_POST['pkg_name'] ?? '')), 'description' => trim((string) ($_POST['pkg_desc'] ?? '')) ?: null,
                 'price' => round(max(0, (float) ($_POST['pkg_price'] ?? 0)), 2),
+                'monthly_price' => round(max(0, (float) ($_POST['pkg_monthly'] ?? 0)), 2),
                 'commission_outright' => round(max(0, (float) ($_POST['pkg_comm_out'] ?? 0)), 2),
                 'commission_unilevel' => round(max(0, (float) ($_POST['pkg_comm_uni'] ?? 0)), 2),
                 'tier' => in_array($_POST['pkg_tier'] ?? '', ['basic', 'standard'], true) ? $_POST['pkg_tier'] : $cur['tier'],
                 'active' => !empty($_POST['pkg_active']),
             ];
-            if ($new['tier'] === 'basic') $new['price'] = 0;
+            if ($new['tier'] === 'basic') { $new['price'] = 0; $new['monthly_price'] = 0; }
             if ($new['name'] === '') $errors[] = 'Package name is required.';
             if ($new['tier'] === 'standard' && $new['price'] <= 0) $errors[] = 'Standard packages need a price.';
             if (!$errors) {
@@ -272,11 +273,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     if ($act === 'create_package') {
         $pkg = [
             'name' => trim($_POST['pkg_name'] ?? ''), 'description' => trim($_POST['pkg_desc'] ?? '') ?: null,
-            'price' => max(0, (float) ($_POST['pkg_price'] ?? 0)), 'commission_outright' => max(0, (float) ($_POST['pkg_comm_out'] ?? 0)),
+            'price' => max(0, (float) ($_POST['pkg_price'] ?? 0)), 'monthly_price' => max(0, (float) ($_POST['pkg_monthly'] ?? 0)),
+            'commission_outright' => max(0, (float) ($_POST['pkg_comm_out'] ?? 0)),
             'commission_unilevel' => max(0, (float) ($_POST['pkg_comm_uni'] ?? 0)),
             'tier' => in_array($_POST['pkg_tier'] ?? '', ['basic', 'standard'], true) ? $_POST['pkg_tier'] : 'basic',
         ];
-        if ($pkg['tier'] === 'basic') $pkg['price'] = 0;   // Basic packages are always free
+        if ($pkg['tier'] === 'basic') { $pkg['price'] = 0; $pkg['monthly_price'] = 0; }   // Basic packages are always free
         if ($pkg['tier'] === 'standard' && $pkg['price'] <= 0) {
             $errors[] = 'Standard packages need a price — referrals pay it via the QR paywall.';
         } elseif ($pkg['name'] !== '') {
@@ -749,7 +751,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Changes don't apply right away. Pick a notice period — everyone is notified now, and the change becomes permanent on that date. You can cancel it any time before then.</p>
       <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="edit_package"><input type="hidden" name="pkg_id" value="<?= e($editPkg['id']) ?>">
         <div class="row"><div class="field"><label>Name</label><input name="pkg_name" required value="<?= e($editPkg['name']) ?>"></div><div class="field"><label>Tier</label><select name="pkg_tier"><option value="basic" <?= $editPkg['tier'] === 'basic' ? 'selected' : '' ?>>Basic (free)</option><option value="standard" <?= $editPkg['tier'] === 'standard' ? 'selected' : '' ?>>Standard (paid)</option></select></div></div>
-        <div class="row"><div class="field"><label>Price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['price']) ?>"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Outright commission ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['commission_outright']) ?>"></div></div>
+        <div class="row"><div class="field"><label>One-time price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['price']) ?>"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Monthly fee ($)</label><input name="pkg_monthly" type="number" step="0.01" min="0" value="<?= e((string) ($editPkg['monthly_price'] ?? 0)) ?>"><div class="hint">0 = no monthly fee.</div></div></div>
+        <div class="row"><div class="field"><label>Outright commission ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['commission_outright']) ?>"></div><div class="field"></div></div>
         <div class="row"><div class="field"><label>Unilevel (%)</label><input name="pkg_comm_uni" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['commission_unilevel']) ?>"></div><div class="field"><label>Description</label><input name="pkg_desc" value="<?= e($editPkg['description'] ?? '') ?>"></div></div>
         <div class="row">
           <div class="field"><label>Apply change in</label><select name="days" required><?php for ($d = 1; $d <= 7; $d++): ?><option value="<?= $d ?>"><?= $d ?> day<?= $d > 1 ? 's' : '' ?> — <?= date('M j', strtotime("+{$d} days")) ?></option><?php endfor; ?></select></div>
@@ -768,7 +771,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           <tr>
             <td><strong><?= e($pk['name']) ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($pk['description'] ?? '') ?></span></td>
             <td><span class="role-badge <?= $pk['tier'] === 'standard' ? 'client_standard' : 'client_basic' ?>"><?= e($pk['tier']) ?></span></td>
-            <td><?= $pk['tier'] === 'basic' ? '<span style="color:var(--green)">Free</span>' : '$' . number_format((float) $pk['price'], 2) ?></td>
+            <td><?= $pk['tier'] === 'basic' ? '<span style="color:var(--green)">Free</span>' : '$' . number_format((float) $pk['price'], 2) ?><?php if ((float) ($pk['monthly_price'] ?? 0) > 0): ?><br><span style="font-size:11px;color:var(--text-dim)">+ $<?= number_format((float) $pk['monthly_price'], 2) ?>/mo</span><?php endif; ?></td>
             <td>$<?= number_format((float) $pk['commission_outright'], 2) ?></td>
             <td><?= e($pk['commission_unilevel']) ?>%</td>
             <td><?= $pk['active'] ? '<span style="color:var(--green)">Yes</span>' : '<span style="color:var(--red)">No</span>' ?></td>
@@ -791,7 +794,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <div class="assign-form"><h3>+ Create package</h3>
         <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="create_package">
           <div class="row" style="margin-bottom:10px"><div class="field"><label>Name</label><input name="pkg_name" required placeholder="Package name"></div><div class="field"><label>Tier</label><select name="pkg_tier"><option value="basic">Basic</option><option value="standard">Standard</option></select></div></div>
-          <div class="row" style="margin-bottom:10px"><div class="field"><label>Price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="0"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Outright ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="0"></div></div>
+          <div class="row" style="margin-bottom:10px"><div class="field"><label>One-time price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="0"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Monthly fee ($)</label><input name="pkg_monthly" type="number" step="0.01" min="0" value="0"></div></div>
+          <div class="row" style="margin-bottom:10px"><div class="field"><label>Outright ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="0"></div><div class="field"></div></div>
           <div class="row" style="margin-bottom:10px"><div class="field"><label>Unilevel (%)</label><input name="pkg_comm_uni" type="number" step="0.01" min="0" value="0"></div><div class="field"><label>Description</label><input name="pkg_desc" placeholder="Optional"></div></div>
           <button class="btn btn-sm btn-solid" type="submit">Create package →</button>
         </form>
