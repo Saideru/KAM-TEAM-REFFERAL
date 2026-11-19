@@ -4,8 +4,8 @@ require_once __DIR__ . '/lib/supabase.php';
 // Lets a signed-in user update the business profile they gave at sign-up.
 $token   = require_login();
 $profile = current_profile($token);
-$back    = $_SERVER['HTTP_REFERER'] ?? '/dashboard.php';
-$back    = (parse_url($back, PHP_URL_PATH) ?: '/dashboard.php') . '#business';   // same-site path only
+$back    = $_SERVER['HTTP_REFERER'] ?? '/index.php';
+$back    = (parse_url($back, PHP_URL_PATH) ?: '/index.php') . '#business';   // same-site path only
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !$profile || !csrf_check()) {
     header('Location: ' . $back); exit;
