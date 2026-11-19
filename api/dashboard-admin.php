@@ -7,10 +7,10 @@ $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
 
-$roleOptions      = ['admin', 'client', 'affiliate'];
+$roleOptions      = ['admin', 'staff', 'client', 'affiliate'];
 $statusOptions    = ['pending', 'accepted', 'suspended', 'rejected'];
 $refStatusOptions = ['pending', 'active', 'completed', 'cancelled'];
-$audienceOptions  = ['all' => 'Everyone', 'affiliate' => 'Affiliates', 'client' => 'Clients', 'admin' => 'Admins'];
+$audienceOptions  = ['all' => 'Everyone', 'affiliate' => 'Growth Partners', 'client' => 'Clients', 'staff' => 'Staff', 'admin' => 'Admins'];
 $adminId          = $profile['id'];
 $back = fn(string $panel) => header('Location: /dashboard-admin.php#' . $panel);
 $svcStatusList    = ['active', 'paused', 'completed'];
@@ -35,6 +35,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             }
             $errors[] = $res['error'];
         }
+    }
+
+    // ---- Register a staff member / employee ----
+    if ($act === 'create_staff') {
+        if (!($err = create_team_account($token, $_POST))) {
+            flash('success', (($_POST['role'] ?? '') === 'admin' ? 'Admin' : 'Staff') . ' account created for ' . trim((string) $_POST['full_name']) . '. They can sign in now with the username and temporary password.');
+            $back('users'); exit;
+        }
+        $errors[] = $err;
     }
 
     if ($act === 'change_status') {
@@ -108,6 +117,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         // A blank expiry leaves the lifecycle alone. Clearing it has to be
         // deliberate, otherwise editing a phone number would hand a Basic
         // client unlimited access.
+        if (array_key_exists('job_title', $_POST)) {
+            $patch['job_title'] = mb_substr(trim((string) $_POST['job_title']), 0, 80) ?: null;
+        }
         if (array_key_exists('affiliate_tier', $_POST)) {
             $patch['affiliate_tier'] = in_array($_POST['affiliate_tier'], ['basic', 'standard'], true) ? $_POST['affiliate_tier'] : null;
         }
@@ -403,7 +415,7 @@ $csRes = supabase_request('GET', '/rest/v1/client_services?select=*,profiles!cli
 $allCS = is_array($csRes['body']) && !$csRes['error'] ? $csRes['body'] : [];
 
 $pendingPayments = array_values(array_filter($allTxns, fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'pending'));
-$applications    = array_values(array_filter($allProfiles, fn($p) => $p['status'] === 'pending' && $p['role'] !== 'admin' && empty($p['deleted_at'])));
+$applications    = array_values(array_filter($allProfiles, fn($p) => $p['status'] === 'pending' && !is_team($p) && empty($p['deleted_at'])));
 $rejectedApps    = array_values(array_filter($allProfiles, fn($p) => $p['status'] === 'rejected' && empty($p['deleted_at'])));
 $approvalCount   = count($applications) + count($pendingPayments);
 
@@ -446,6 +458,7 @@ $allLogs = is_array($logsRes['body']) && !$logsRes['error'] ? $logsRes['body'] :
 
 $totalUsers    = count(array_filter($allProfiles, fn($p) => empty($p['deleted_at'])));
 $adminCount    = count(array_filter($allProfiles, fn($p) => $p['role'] === 'admin' && empty($p['deleted_at'])));
+$staffCount    = count(array_filter($allProfiles, fn($p) => $p['role'] === 'staff' && empty($p['deleted_at'])));
 $clientCount   = count(array_filter($allProfiles, fn($p) => $p['role'] === 'client' && empty($p['deleted_at'])));
 $affCount      = count(array_filter($allProfiles, fn($p) => $p['role'] === 'affiliate' && empty($p['deleted_at'])));
 
@@ -496,17 +509,17 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
   <section class="grid">
-    <div class="card"><span class="label">01 // Users</span><div class="big cyan"><?= $totalUsers ?></div><span class="label" style="font-size:10px;display:block;margin-top:4px"><?= $adminCount ?> admin · <?= $clientCount ?> client · <?= $affCount ?> affiliate</span></div>
+    <div class="card"><span class="label">01 // Users</span><div class="big cyan"><?= $totalUsers ?></div><span class="label" style="font-size:10px;display:block;margin-top:4px"><?= $adminCount ?> admin · <?= $staffCount ?> staff · <?= $clientCount ?> client · <?= $affCount ?> growth partner<?= $affCount === 1 ? '' : 's' ?></span></div>
     <div class="card"><span class="label">02 // Referrals</span><div class="big"><?= count($allRefs) ?></div></div>
     <div class="card"><span class="label">03 // Packages</span><div class="big"><?= count($allPkgs) ?></div></div>
     <div class="card"><span class="label">04 // Revenue</span><div class="big green">$<?= number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2) ?></div></div>
   </section>
 
   <?php if ($approvalCount): ?>
-    <div class="alert alert-warn"><strong><?= count($applications) ?> account application<?= count($applications) === 1 ? '' : 's' ?> and <?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> (affiliate plans &amp; client deposits) waiting.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
+    <div class="alert alert-warn"><strong><?= count($applications) ?> account application<?= count($applications) === 1 ? '' : 's' ?> and <?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> (Growth Partner plans &amp; client deposits) waiting.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
   <?php endif; ?>
   <?php if ($pay['payment_qr'] === ''): ?>
-    <div class="alert alert-warn">No payment QR code yet — affiliates can't pay for Standard and clients can't pay deposits until you add one in the <a href="#payment" onclick="document.querySelector('.admin-tab[data-panel=payment]').click()">Payment tab</a>.</div>
+    <div class="alert alert-warn">No payment QR code yet — Growth Partners can't pay for Standard and clients can't pay deposits until you add one in the <a href="#payment" onclick="document.querySelector('.admin-tab[data-panel=payment]').click()">Payment tab</a>.</div>
   <?php endif; ?>
 
 
@@ -518,8 +531,9 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="edit_user"><input type="hidden" name="user_id" value="<?= e($editUser['id']) ?>">
         <div class="row"><div class="field"><label>Full name</label><input name="full_name" required value="<?= e($editUser['full_name']) ?>"></div><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($editUser['username']) ?>"></div></div>
         <div class="row"><div class="field"><label>Email</label><input name="email" type="email" value="<?= e($editUser['email'] ?? '') ?>"></div><div class="field"><label>Phone</label><input name="phone" value="<?= e($editUser['phone'] ?? '') ?>"></div></div>
-        <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Affiliate term expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty to keep it as it is. Client and admin accounts never expire.</div><label class="check" style="margin-top:6px"><input type="checkbox" name="lifecycle_clear" value="1"> Remove the expiry</label></div></div>
-        <?php if ($editUser['role'] === 'affiliate'): ?><div class="row"><div class="field"><label>Affiliate plan</label><select name="affiliate_tier"><option value="">No plan yet</option><option value="basic" <?= ($editUser['affiliate_tier'] ?? '') === 'basic' ? 'selected' : '' ?>>Basic</option><option value="standard" <?= ($editUser['affiliate_tier'] ?? '') === 'standard' ? 'selected' : '' ?>>Standard</option></select></div><div class="field"></div></div><?php endif; ?>
+        <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Growth Partner term expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty to keep it as it is. Client and admin accounts never expire.</div><label class="check" style="margin-top:6px"><input type="checkbox" name="lifecycle_clear" value="1"> Remove the expiry</label></div></div>
+        <?php if (is_team($editUser)): ?><div class="row"><div class="field"><label>Position / job title</label><input name="job_title" maxlength="80" value="<?= e($editUser['job_title'] ?? '') ?>"></div><div class="field"></div></div><?php endif; ?>
+        <?php if ($editUser['role'] === 'affiliate'): ?><div class="row"><div class="field"><label>Growth Partner plan</label><select name="affiliate_tier"><option value="">No plan yet</option><option value="basic" <?= ($editUser['affiliate_tier'] ?? '') === 'basic' ? 'selected' : '' ?>>Basic</option><option value="standard" <?= ($editUser['affiliate_tier'] ?? '') === 'standard' ? 'selected' : '' ?>>Standard</option></select></div><div class="field"></div></div><?php endif; ?>
         <div class="row"><div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave empty to keep current"></div><div class="field"><label>Role / status</label><div class="hint" style="margin-top:10px">Change these with the selectors in the table below.</div></div></div>
         <button class="btn btn-sm btn-solid" type="submit">Save user →</button>
       </form>
@@ -534,6 +548,26 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       </form>
     </div>
     <?php endif; ?>
+    <?php $staffOpen = ($_POST['admin_action'] ?? '') === 'create_staff' && $errors; $sp = $staffOpen ? $_POST : []; ?>
+    <details class="card staff-card" id="add-staff" <?= $staffOpen ? 'open' : '' ?>>
+      <summary><h2>+ Register staff / employee</h2><span class="hint">Creates an approved account right away — no application, no program terms, no expiry.</span></summary>
+      <form method="post" autocomplete="off"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="create_staff">
+        <div class="row"><div class="field"><label>Full name</label><input name="full_name" required maxlength="120" value="<?= e($sp['full_name'] ?? '') ?>"></div>
+          <div class="field"><label>Position / job title</label><input name="job_title" maxlength="80" placeholder="e.g. Virtual Assistant, SEO Specialist, QA" value="<?= e($sp['job_title'] ?? '') ?>"></div></div>
+        <div class="row"><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" title="3–20 letters, numbers or underscores" value="<?= e($sp['username'] ?? '') ?>"></div>
+          <div class="field"><label>Access</label><select name="role">
+            <option value="staff" <?= ($sp['role'] ?? 'staff') === 'staff' ? 'selected' : '' ?>>Staff — client work &amp; task logs</option>
+            <option value="admin" <?= ($sp['role'] ?? '') === 'admin' ? 'selected' : '' ?>>Admin — full admin dashboard</option>
+          </select></div></div>
+        <div class="row"><div class="field"><label>Work email</label><input name="email" type="email" value="<?= e($sp['email'] ?? '') ?>"></div>
+          <div class="field"><label>Phone</label><input name="phone" maxlength="40" value="<?= e($sp['phone'] ?? '') ?>"></div></div>
+        <div class="row"><div class="field"><label>Temporary password</label><input name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+          <div class="field"><label>Confirm password</label><input name="password_confirm" type="password" required minlength="8" autocomplete="new-password"></div></div>
+        <p class="hint" style="margin:0 0 10px">Staff sign in on the normal login page and land in <strong>Client work</strong>: they update tasks, keep the task log, attach evidence, flag blockers and draft reports. Approving and delivering client reports stays with admins. Their names are suggested in every SOP tag field.</p>
+        <button class="btn btn-sm btn-solid" type="submit">Create account →</button>
+      </form>
+    </details>
+
     <div class="card"><h2>All users</h2>
       <div class="table-scroll"><table>
         <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Lifecycle</th><th>Code</th><th>Actions</th></tr></thead>
@@ -542,7 +576,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           <tr style="<?= $deleted ? 'opacity:.5' : '' ?>">
             <td><strong><?= e($p['full_name']) ?></strong><?= $deleted ? ' <span style="color:var(--red)">[DEL]</span>' : '' ?></td>
             <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
-            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'affiliate' ? '<br><span class="hint">' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
+            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'affiliate' ? '<br><span class="hint">' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?><?= is_team($p) && !empty($p['job_title']) ? '<br><span class="hint">' . e($p['job_title']) . '</span>' : '' ?></td>
             <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
             <td style="font-size:12px"><?php if ($p['role'] !== 'affiliate'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>—<?php else: $st = affiliate_state($p); ?><?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
@@ -600,14 +634,14 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
     <div class="card"><h2>Payments to verify</h2>
       <?php if ($nextUp): ?><p class="roulette-next">Next approved plan goes to <strong><?= e($nextUp) ?></strong> (roulette)</p><?php endif; ?>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px"><strong>Affiliate plans</strong> — Basic (free) or Standard (US$100: first plan, upgrade, or +2-year renewal); never commissionable. <strong>Client deposits</strong> — the 50% advance deposit on a service package; approving pays the referrer's Outright Commission (<?= e(pct_label($comPct)) ?>% of the deposit) and adds 3 months to an affiliate referrer's term. Check the reference number in your payment app first.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px"><strong>Growth Partner plans</strong> — Basic (free) or Standard (US$100: first plan, upgrade, or +2-year renewal); never commissionable. <strong>Client deposits</strong> — the 50% advance deposit on a service package; approving pays the referrer's Outright Commission (<?= e(pct_label($comPct)) ?>% of the deposit) and adds 3 months to a Growth Partner referrer's term. Check the reference number in your payment app first.</p>
       <?php if (!$pendingPayments): ?><p class="empty">No plan requests waiting.</p>
       <?php else: ?><div class="table-scroll"><table>
         <thead><tr><th>User</th><th>For</th><th>Amount</th><th>Reference</th><th>Submitted</th><th>Decision</th></tr></thead>
         <tbody><?php foreach ($pendingPayments as $t): ?>
           <tr>
             <td><strong><?= e($t['profiles']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($t['profiles']['username'] ?? '') ?><?= !empty($t['profiles']['phone']) ? ' · ' . e($t['profiles']['phone']) : '' ?></span></td>
-            <td><?= e($t['packages']['name'] ?? '—') ?><br><span class="role-badge <?= $t['type'] === 'deposit' ? 'client' : 'affiliate' ?>"><?= $t['type'] === 'deposit' ? 'Client deposit (50%)' : 'Affiliate plan' ?></span></td>
+            <td><?= e($t['packages']['name'] ?? '—') ?><br><span class="role-badge <?= $t['type'] === 'deposit' ? 'client' : 'affiliate' ?>"><?= $t['type'] === 'deposit' ? 'Client deposit (50%)' : 'Growth Partner plan' ?></span></td>
             <td style="color:var(--green);font-weight:600"><?= (float) $t['amount'] > 0 ? '$' . number_format((float) $t['amount'], 2) : 'Free' ?></td>
             <td style="font-family:var(--font);font-size:13px"><?= e($t['payment_ref'] ?? '—') ?></td>
             <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($t['created_at'])) ?></td>
@@ -689,7 +723,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- PAYMENT SETTINGS -->
   <div id="panel-payment" class="admin-panel">
     <div class="card" style="margin-bottom:12px"><h2>Outright commission</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a client who signed up with a referral code pays the 50% advance deposit on a service package, the referrer (affiliate or client) earns this percentage of the deposit — Manual §3.1 sets it at 10%. Affiliate plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a client who signed up with a referral code pays the 50% advance deposit on a service package, the referrer (Growth Partner or client) earns this percentage of the deposit — Manual §3.1 sets it at 10%. Growth Partner plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
       <form method="post">
         <input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="save_commission">
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
@@ -704,7 +738,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     </div>
 
     <div class="card"><h2>QR paywall</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Affiliates scan this QR code to pay for Standard, and clients to pay their 50% advance deposit, then enter their receipt reference for you to approve.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Growth Partners scan this QR code to pay for Standard, and clients to pay their 50% advance deposit, then enter their receipt reference for you to approve.</p>
       <form method="post" enctype="multipart/form-data">
         <input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="save_payment">
         <div class="paywall-admin">
@@ -756,13 +790,13 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <?php else: ?>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Changes don't apply right away. Pick a notice period — everyone is notified now, and the change becomes permanent on that date. You can cancel it any time before then.</p>
       <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="edit_package"><input type="hidden" name="pkg_id" value="<?= e($editPkg['id']) ?>">
-        <div class="row"><div class="field"><label>Name</label><input name="pkg_name" required value="<?= e($editPkg['name']) ?>"></div><div class="field"><label>Kind</label><select name="pkg_kind"><option value="service" <?= ($editPkg['kind'] ?? 'service') === 'service' ? 'selected' : '' ?>>Client service package</option><option value="affiliate" <?= ($editPkg['kind'] ?? '') === 'affiliate' ? 'selected' : '' ?>>Affiliate plan</option></select></div></div>
-        <div class="row"><div class="field"><label>Affiliate tier <span class="hint">(affiliate plans only)</span></label><select name="pkg_tier"><option value="basic" <?= $editPkg['tier'] === 'basic' ? 'selected' : '' ?>>Basic (free)</option><option value="standard" <?= $editPkg['tier'] === 'standard' ? 'selected' : '' ?>>Standard (paid)</option></select></div><div class="field"></div></div>
+        <div class="row"><div class="field"><label>Name</label><input name="pkg_name" required value="<?= e($editPkg['name']) ?>"></div><div class="field"><label>Kind</label><select name="pkg_kind"><option value="service" <?= ($editPkg['kind'] ?? 'service') === 'service' ? 'selected' : '' ?>>Client service package</option><option value="affiliate" <?= ($editPkg['kind'] ?? '') === 'affiliate' ? 'selected' : '' ?>>Growth Partner plan</option></select></div></div>
+        <div class="row"><div class="field"><label>Partner tier <span class="hint">(Growth Partner plans only)</span></label><select name="pkg_tier"><option value="basic" <?= $editPkg['tier'] === 'basic' ? 'selected' : '' ?>>Basic (free)</option><option value="standard" <?= $editPkg['tier'] === 'standard' ? 'selected' : '' ?>>Standard (paid)</option></select></div><div class="field"></div></div>
         <div class="row"><div class="field"><label>Price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['price']) ?>"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Outright commission ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['commission_outright']) ?>"></div></div>
         <div class="row"><div class="field"><label>Unilevel (%)</label><input name="pkg_comm_uni" type="number" step="0.01" min="0" value="<?= e((string) $editPkg['commission_unilevel']) ?>"></div><div class="field"><label>Description</label><input name="pkg_desc" value="<?= e($editPkg['description'] ?? '') ?>"></div></div>
         <div class="row">
           <div class="field"><label>Apply change in</label><select name="days" required><?php for ($d = 1; $d <= 7; $d++): ?><option value="<?= $d ?>"><?= $d ?> day<?= $d > 1 ? 's' : '' ?> — <?= date('M j', strtotime("+{$d} days")) ?></option><?php endfor; ?></select></div>
-          <div class="field"><label>Availability</label><label class="check" style="margin-top:10px"><input type="checkbox" name="pkg_active" value="1" <?= $editPkg['active'] ? 'checked' : '' ?>> Show this package (to affiliates or clients)</label></div>
+          <div class="field"><label>Availability</label><label class="check" style="margin-top:10px"><input type="checkbox" name="pkg_active" value="1" <?= $editPkg['active'] ? 'checked' : '' ?>> Show this package (to Growth Partners or clients)</label></div>
         </div>
         <button class="btn btn-sm btn-solid" type="submit">Schedule change &amp; notify everyone →</button>
       </form>
@@ -776,7 +810,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <tbody><?php foreach ($allPkgs as $pk): $sc = $scheduledByPkg[$pk['id']] ?? null; ?>
           <tr>
             <td><strong><?= e($pk['name']) ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($pk['description'] ?? '') ?></span></td>
-            <td><span class="role-badge <?= ($pk['kind'] ?? 'service') === 'service' ? 'client' : 'affiliate' ?>"><?= ($pk['kind'] ?? 'service') === 'service' ? 'Service' : 'Affiliate · ' . e(tier_label($pk['tier'])) ?></span></td>
+            <td><span class="role-badge <?= ($pk['kind'] ?? 'service') === 'service' ? 'client' : 'affiliate' ?>"><?= ($pk['kind'] ?? 'service') === 'service' ? 'Service' : 'Growth Partner · ' . e(tier_label($pk['tier'])) ?></span></td>
             <td><?= $pk['tier'] === 'basic' ? '<span style="color:var(--green)">Free</span>' : '$' . number_format((float) $pk['price'], 2) ?></td>
             <td>$<?= number_format((float) $pk['commission_outright'], 2) ?></td>
             <td><?= e($pk['commission_unilevel']) ?>%</td>
@@ -799,8 +833,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <?php endif; ?>
       <div class="assign-form"><h3>+ Create package</h3>
         <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="create_package">
-          <div class="row" style="margin-bottom:10px"><div class="field"><label>Name</label><input name="pkg_name" required placeholder="Package name"></div><div class="field"><label>Kind</label><select name="pkg_kind"><option value="service">Client service package</option><option value="affiliate">Affiliate plan</option></select></div></div>
-          <div class="row" style="margin-bottom:10px"><div class="field"><label>Affiliate tier <span class="hint">(affiliate plans only)</span></label><select name="pkg_tier"><option value="basic">Basic</option><option value="standard">Standard</option></select></div><div class="field"></div></div>
+          <div class="row" style="margin-bottom:10px"><div class="field"><label>Name</label><input name="pkg_name" required placeholder="Package name"></div><div class="field"><label>Kind</label><select name="pkg_kind"><option value="service">Client service package</option><option value="affiliate">Growth Partner plan</option></select></div></div>
+          <div class="row" style="margin-bottom:10px"><div class="field"><label>Partner tier <span class="hint">(Growth Partner plans only)</span></label><select name="pkg_tier"><option value="basic">Basic</option><option value="standard">Standard</option></select></div><div class="field"></div></div>
           <div class="row" style="margin-bottom:10px"><div class="field"><label>Price ($)</label><input name="pkg_price" type="number" step="0.01" min="0" value="0"><div class="hint">Ignored for Basic — Basic is always free.</div></div><div class="field"><label>Outright ($)</label><input name="pkg_comm_out" type="number" step="0.01" min="0" value="0"></div></div>
           <div class="row" style="margin-bottom:10px"><div class="field"><label>Unilevel (%)</label><input name="pkg_comm_uni" type="number" step="0.01" min="0" value="0"></div><div class="field"><label>Description</label><input name="pkg_desc" placeholder="Optional"></div></div>
           <button class="btn btn-sm btn-solid" type="submit">Create package →</button>
@@ -859,7 +893,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- ROULETTE -->
   <div id="panel-roulette" class="admin-panel">
     <div class="card" style="margin-bottom:12px"><h2>Roulette rotation</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every account you approve — Affiliate or Client — is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped. An account keeps its admin for good, so any package it buys later goes to the same person instead of taking a new turn.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every account you approve — Growth Partner or Client — is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped. An account keeps its admin for good, so any package it buys later goes to the same person instead of taking a new turn.</p>
       <?php if (!$roulette['members']): ?><p class="empty">Nobody is in the rotation — approved accounts won't be assigned. Add an admin below.</p>
       <?php else: ?>
       <ol class="roulette">
@@ -890,7 +924,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <tbody><?php foreach ($assignedShown as $t): ?>
           <tr>
             <td><strong><?= e($t['profiles']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($t['profiles']['email'] ?? '') ?> <?= e($t['profiles']['phone'] ?? '') ?></span></td>
-            <td><?= e($t['packages']['name'] ?? '—') ?><br><span class="role-badge <?= $t['type'] === 'deposit' ? 'client' : 'affiliate' ?>"><?= $t['type'] === 'deposit' ? 'Client package' : 'Affiliate plan' ?></span></td>
+            <td><?= e($t['packages']['name'] ?? '—') ?><br><span class="role-badge <?= $t['type'] === 'deposit' ? 'client' : 'affiliate' ?>"><?= $t['type'] === 'deposit' ? 'Client package' : 'Growth Partner plan' ?></span></td>
             <td style="min-width:200px"><?= business_summary($t['profiles'] ?? []) ?></td>
             <td style="font-size:12px"><?= date('M j, Y', strtotime($t['reviewed_at'] ?? $t['created_at'])) ?></td>
             <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="reassign"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><select name="assigned_admin"><?php foreach ($admins as $a): ?><option value="<?= e($a['id']) ?>" <?= $t['assigned_admin'] === $a['id'] ? 'selected' : '' ?>><?= e($a['full_name']) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Move</button></form></td>

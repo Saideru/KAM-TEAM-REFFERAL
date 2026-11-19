@@ -285,6 +285,15 @@ td { padding: 10px 8px 10px 0; border-bottom: 1px solid var(--border); vertical-
 .role-badge.referral { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 .role-badge.client { background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 .role-badge.affiliate { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
+.role-badge.staff, .topbar .role-label.staff { background: var(--green-dim); color: var(--green); border: 1px solid var(--border-light); }
+
+/* ---------- Register staff (admin › users) ---------- */
+.staff-card { margin-bottom: 12px; }
+.staff-card > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.staff-card > summary::-webkit-details-marker { display: none; }
+.staff-card > summary h2 { margin: 0; }
+.staff-card[open] > summary { margin-bottom: 14px; }
+.staff-card .row { margin-bottom: 10px; }
 
 /* ---------- Client service items ---------- */
 .svc-list { display: grid; gap: 10px; }

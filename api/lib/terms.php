@@ -13,7 +13,7 @@
 // manual itself changes, bump TERMS_VERSION / TERMS_EFFECTIVE too.
 // =====================================================================
 
-const TERMS_PROGRAM   = 'KAM TEAM Growth Partnership Program';
+const TERMS_PROGRAM   = 'KAM Growth Partnership Program';
 const TERMS_VERSION   = '1.7';
 const TERMS_EFFECTIVE = 'December 19, 2026';
 
@@ -32,7 +32,7 @@ const TERMS_SECTIONS = [
         'number' => '6',
         'title'  => 'Termination, Upgrade & Lifetime Ban',
         'rules'  => [
-            'Automatic termination: an account that expires and is not saved within its grace period is deleted, its Pending commissions are forfeited, and its Level 1 affiliates roll up to its upline.',
+            'Automatic termination: an account that expires and is not saved within its grace period is deleted, its Pending commissions are forfeited, and its Level 1 Growth Partners roll up to its upline.',
             'Voluntary termination: 7 days\' written notice via the dashboard. Your final Approved balance is paid in the next payout cycle; roll-up applies immediately.',
             'Termination by KAM TEAM: 14 days\' notice for a breach of Section 8; immediate and without notice for fraud.',
             'Basic to Standard upgrade: during the 7-day Basic grace period you may pay US$100 to upgrade. New expiry = payment date + 3 months + 2 years.',
@@ -42,7 +42,7 @@ const TERMS_SECTIONS = [
     ],
     'conduct' => [
         'number' => '8',
-        'title'  => 'Affiliate Responsibilities & Prohibited Actions',
+        'title'  => 'Growth Partner Responsibilities & Prohibited Actions',
         'rules'  => [
             'Allowed: email, social media, blogging, paid ads and direct outreach.',
             'Prohibited: spam, false claims, brand bidding, duplicate accounts, self-referrals and fraud.',

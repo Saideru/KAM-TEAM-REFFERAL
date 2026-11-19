@@ -83,7 +83,7 @@ $contact   = !empty($profile['assigned_admin'])
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><?= $view === 'affiliate' ? 'Affiliate account' : 'Client' ?> // KAM Team</title>
+  <title><?= $view === 'affiliate' ? 'Growth Partnership' : 'Client' ?> // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -111,20 +111,20 @@ $contact   = !empty($profile['assigned_admin'])
     ['label' => 'Work progress',      'href' => '#progress', 'icon' => 'check'],
     ['label' => 'Reports',            'href' => '#reports',  'icon' => 'log'],
     ['label' => 'Your business',      'href' => '#business', 'icon' => 'brief'],
-    ['label' => 'Affiliate account →', 'href' => '/dashboard-client.php?view=affiliate', 'icon' => 'link'],
+    ['label' => 'Growth Partnership →', 'href' => '/dashboard-client.php?view=affiliate', 'icon' => 'link'],
     ['label' => 'Verify ID',          'href' => '/kyc.php',  'icon' => 'id'],
-], $view === 'affiliate' ? 'Your affiliate account' : 'Client') ?>
+], $view === 'affiliate' ? 'Growth Partnership' : 'Client') ?>
 <main class="wrap">
   <nav class="account-switch" aria-label="Account">
     <a href="/dashboard-client.php" class="<?= $view === 'client' ? 'on' : '' ?>">Client account</a>
-    <a href="/dashboard-client.php?view=affiliate" class="<?= $view === 'affiliate' ? 'on' : '' ?>">Affiliate account <small><?= e($profile['referral_code'] ?? '') ?></small></a>
+    <a href="/dashboard-client.php?view=affiliate" class="<?= $view === 'affiliate' ? 'on' : '' ?>">Growth Partnership <small><?= e($profile['referral_code'] ?? '') ?></small></a>
   </nav>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
 <?php if ($view === 'affiliate'): ?>
-  <span class="label"><span class="dot" style="background:var(--yellow)"></span>Affiliate account // linked to your client account</span>
+  <span class="label"><span class="dot" style="background:var(--yellow)"></span>KAM Growth Partnership Program // linked to your client account</span>
   <h1>Refer clients, <span class="accent" style="color:var(--yellow)">earn commission.</span></h1>
   <p class="hint" style="margin:-6px 0 14px">Your client account includes your own referral code. It doesn't expire and has no plan to buy.</p>
   <?= affiliate_account_html($token, $profile, true) ?>

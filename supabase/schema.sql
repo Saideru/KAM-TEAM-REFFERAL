@@ -708,3 +708,14 @@ create trigger client_reports_touch_updated_at
 alter table public.client_tasks        enable row level security;
 alter table public.client_task_updates enable row level security;
 alter table public.client_reports      enable row level security;
+
+-- =====================================================================
+-- 13) Staff / employee accounts (migrations/20261122_staff_role.sql)
+-- =====================================================================
+alter table public.profiles add column if not exists job_title text;
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('admin', 'staff', 'client', 'affiliate'));
+alter table public.notifications drop constraint if exists notifications_audience_check;
+alter table public.notifications add constraint notifications_audience_check
+  check (audience in ('all', 'admin', 'staff', 'client', 'affiliate'));

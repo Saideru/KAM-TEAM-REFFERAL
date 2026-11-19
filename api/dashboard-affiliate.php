@@ -50,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         } elseif ($pkg['tier'] === 'basic') {
             $res = supabase_request('POST', '/rest/v1/transactions', [
                 'user_id' => $userId, 'package_id' => $pkg['id'], 'amount' => 0, 'type' => 'activation',
-                'status' => 'pending', 'notes' => 'Free Basic affiliate plan request',
+                'status' => 'pending', 'notes' => 'Free Basic Growth Partner plan request',
             ], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'plan_requested', 'profile', $userId, 'Requested Basic — ' . $pkg['name']);
@@ -104,7 +104,7 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Affiliate // KAM Team</title>
+  <title>Growth Partner // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -114,7 +114,7 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
     <?= kam_lockup() ?>
     <div style="display:flex;align-items:center;gap:10px">
       <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label affiliate">Affiliate<?= $tier ? ' · ' . e(tier_label($tier)) : '' ?></span>
+      <span class="role-label affiliate">Growth Partner<?= $tier ? ' · ' . e(tier_label($tier)) : '' ?></span>
       <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
     </div>
   </div>
@@ -122,15 +122,15 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
 
 <div class="shell">
 <?= app_sidebar([
-    ['label' => 'Affiliate plan', 'href' => '#plans',    'icon' => 'box'],
+    ['label' => 'Partner plan', 'href' => '#plans',    'icon' => 'box'],
     ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
     ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
     ['label' => 'Your referrals', 'href' => '#network',  'icon' => 'tree'],
     ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
     ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
-], 'Affiliate') ?>
+], 'Growth Partner') ?>
 <main class="wrap">
-  <span class="label"><span class="dot" style="background:var(--yellow)"></span>Affiliate // <?= e($profile['referral_code'] ?? '') ?></span>
+  <span class="label"><span class="dot" style="background:var(--yellow)"></span>KAM Growth Partnership Program // <?= e($profile['referral_code'] ?? '') ?></span>
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--yellow)"><?= $tier ? 'Refer clients, earn commission.' : 'Choose your plan.' ?></span></h1>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
@@ -141,15 +141,15 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
     <div class="alert alert-error"><strong>Your <?= e(tier_label($tier)) ?> term expired on <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>.</strong>
       You have until <strong><?= date('M j, Y', $graceEnds) ?></strong> to save it —
       <?= $tier === 'basic' ? 'refer 1 Qualified Client (+3 months) or upgrade to Standard for US$100.' : 'renew for US$100.' ?>
-      After that the account is terminated, Pending commissions are forfeited and your Level 1 affiliates roll up to your upline.</div>
+      After that the account is terminated, Pending commissions are forfeited and your Level 1 Growth Partners roll up to your upline.</div>
   <?php endif; ?>
 
   <?php if ($tier): ?>
-    <div id="overview"><?= lifecycle_countdown($profile, tier_label($tier) . ' affiliate term // +3 months per Qualified Client') ?></div>
+    <div id="overview"><?= lifecycle_countdown($profile, tier_label($tier) . ' Growth Partner term // +3 months per Qualified Client') ?></div>
   <?php endif; ?>
 
   <section id="plans" style="margin-bottom:20px">
-    <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>affiliate_plan.sh // <?= $tier ? 'Your plan: ' . e(tier_label($tier)) : 'Choose your affiliate plan' ?></span></div>
+    <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>partner_plan.sh // <?= $tier ? 'Your plan: ' . e(tier_label($tier)) : 'Choose your Growth Partner plan' ?></span></div>
     <div class="terminal-body">
       <?php if ($pending): ?>
         <div class="pending-box">
@@ -178,7 +178,7 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
         <div class="tier-cards">
           <?php foreach ($offered as $pk): $std = $pk['tier'] === 'standard'; $label = $offer($pk); ?>
           <div class="tier-card <?= $std ? 'highlight' : '' ?>">
-            <span class="label" style="color:var(--<?= $std ? 'orange' : 'green' ?>)"><?= $std ? 'Standard' : 'Basic' ?> affiliate</span>
+            <span class="label" style="color:var(--<?= $std ? 'orange' : 'green' ?>)"><?= $std ? 'Standard' : 'Basic' ?> Growth Partner</span>
             <h3 class="tier-name"><?= e($pk['name']) ?></h3>
             <div class="tier-price <?= $std ? 'orange' : '' ?>" style="<?= $std ? '' : 'color:var(--green)' ?>"><?= $std ? '$' . number_format((float) $pk['price'], 2) : 'Free' ?></div>
             <?php if (!empty($pk['description'])): ?><p class="tier-desc"><?= e($pk['description']) ?></p><?php endif; ?>

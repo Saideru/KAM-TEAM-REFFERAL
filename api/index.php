@@ -95,7 +95,7 @@ $csrf = csrf_token();
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KAM Team // Growth Partnership Program</title>
+  <title>KAM Growth Partnership Program</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -107,9 +107,9 @@ $csrf = csrf_token();
     <div><?= kam_lockup('reversed') ?></div>
 
     <div>
-      <span class="label"><span class="dot"></span>KAM TEAM // GROWTH PARTNERSHIP PROGRAM</span>
+      <span class="label"><span class="dot"></span>KAM GROWTH PARTNERSHIP PROGRAM</span>
       <h1>Solve business problems with the power of <span class="accent">people + AI.</span></h1>
-      <p class="lead">Join the KAM Team Growth Partnership Program. Refer clients, track your referrals and manage commissions in one place.</p>
+      <p class="lead">Join the KAM Growth Partnership Program as a Growth Partner. Refer clients, track your referrals and manage commissions in one place.</p>
 
       <ol class="steps">
         <li><span class="label" style="color:var(--orange)">01 //</span><span>Register and choose your tier — <strong style="color:var(--white)">Basic</strong> or <strong style="color:var(--orange)">Standard</strong>.</span></li>
@@ -185,7 +185,7 @@ $csrf = csrf_token();
                 <span class="role-icon">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 </span>
-                <span class="role-info"><strong>Affiliate</strong><small>Refer clients — choose Basic or Standard after sign-up</small></span>
+                <span class="role-info"><strong>Growth Partner</strong><small>Refer clients — choose Basic or Standard after sign-up</small></span>
               </label>
               <label class="role-option <?= $old['role'] === 'client' ? 'active' : '' ?>">
                 <input type="radio" name="role" value="client" <?= $old['role'] === 'client' ? 'checked' : '' ?>>
@@ -245,7 +245,7 @@ $csrf = csrf_token();
         <p class="switch">Already registered? <button type="button" data-mode="login">Sign in</button></p>
       </div>
 
-      <p class="foot">KAM TEAM // GROWTH PARTNERSHIP PROGRAM</p>
+      <p class="foot">KAM GROWTH PARTNERSHIP PROGRAM</p>
     </div>
   </section>
 </main>

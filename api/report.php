@@ -6,11 +6,11 @@ require_once __DIR__ . '/lib/work.php';
 // Printable client report (SOP-OPS-001 Appendix B). Admins see any version;
 // a client sees only their own delivered reports. Print → Save as PDF uses
 // the SOP file name as the page title.
-['token' => $token, 'profile' => $profile] = require_role(['admin', 'client']);
+['token' => $token, 'profile' => $profile] = require_role(['admin', 'staff', 'client']);
 $id  = (string) ($_GET['id'] ?? '');
 $rep = supabase_request('GET', '/rest/v1/client_reports?select=*,packages(name),client:profiles!client_reports_client_id_fkey(full_name)&id=eq.' . urlencode($id), null, $token)['body'][0] ?? null;
 
-$isAdmin = $profile['role'] === 'admin';
+$isAdmin = is_team($profile);   // admins and staff see every version
 if (!$rep || (!$isAdmin && ($rep['client_id'] !== $profile['id'] || $rep['status'] !== 'delivered'))) {
     http_response_code(404);
     flash('error', 'Report not found.');

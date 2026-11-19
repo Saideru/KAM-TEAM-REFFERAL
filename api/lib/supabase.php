@@ -287,9 +287,16 @@ function check_account_status(?array $profile): bool
     return true;
 }
 
+// Admins and staff are KAM TEAM's own people: registered by an admin, never
+// behind the approval wall and not bound by the affiliate program terms.
+function is_team(?array $profile): bool
+{
+    return in_array($profile['role'] ?? '', ['admin', 'staff'], true);
+}
+
 function is_walled(?array $profile): bool
 {
-    return $profile && ($profile['role'] ?? '') !== 'admin'
+    return $profile && !is_team($profile)
         && in_array($profile['status'] ?? '', ['pending', 'rejected'], true);
 }
 
@@ -297,6 +304,7 @@ function dashboard_url(string $role): string
 {
     return [
         'admin'     => '/dashboard-admin.php',
+        'staff'     => '/work.php',
         'client'    => '/dashboard-client.php',
         'affiliate' => '/dashboard-affiliate.php',
     ][$role] ?? '/dashboard-affiliate.php';
@@ -318,7 +326,7 @@ function redirect_by_role(?string $welcome = null): void
 // True when the user still has to accept the current manual version.
 function terms_outdated(?array $profile): bool
 {
-    return $profile && ($profile['role'] ?? '') !== 'admin'
+    return $profile && !is_team($profile)
         && ($profile['terms_version'] ?? '') !== TERMS_VERSION;
 }
 
@@ -344,7 +352,7 @@ function require_role(string|array $allowed): array
 
     if ($role !== 'admin' && !check_account_status($profile)) {
         flash('error', $role === 'affiliate' && affiliate_state($profile) === 'terminated'
-            ? 'Your affiliate account expired and its grace period has ended. Contact support.'
+            ? 'Your Growth Partner account expired and its grace period has ended. Contact support.'
             : 'Your account is inactive. Contact support.');
         supabase_sign_out_local();
         header('Location: /index.php');
@@ -385,7 +393,7 @@ const LOG_CATEGORIES = [
     'auth'     => ['label' => 'Login & terms',             'actions' => ['login_success', 'login_failed', 'logout', 'terms_accepted'], 'prefixes' => []],
     'tasks'    => ['label' => 'Client task log',           'actions' => [], 'prefixes' => ['task_']],
     'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
-    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
+    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
     'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
     'kyc'      => ['label' => 'KYC',                       'actions' => [], 'prefixes' => ['kyc_']],
     'packages' => ['label' => 'Packages',                  'actions' => ['create_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
@@ -526,7 +534,7 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
         pay_referral_commission($token, $txn);
     } else {
         $tier = $txn['packages']['tier'] ?? 'standard';
-        notify($token, ucfirst($tier) . ' affiliate plan active',
+        notify($token, ucfirst($tier) . ' Growth Partner plan active',
             'Your ' . $pkgName . ' plan is active. Your countdown has started.'
             . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
     }
@@ -596,7 +604,7 @@ function pay_referral_commission(string $token, array $txn): void
     notify($token, 'You earned $' . number_format($commission, 2),
         ($buyer['full_name'] ?? 'A client you referred') . ' paid the advance deposit on ' . ($txn['packages']['name'] ?? 'a package')
         . '. You earned ' . pct_label($pct) . '% of it'
-        . ($referrer['role'] === 'affiliate' ? ' and 3 more months on your affiliate term.' : '.'), $refId);
+        . ($referrer['role'] === 'affiliate' ? ' and 3 more months on your Growth Partner term.' : '.'), $refId);
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -623,7 +631,51 @@ function reject_activation(string $token, string $txnId, string $adminId, string
 
 function role_name(string $role): string
 {
-    return ['admin' => 'Admin', 'client' => 'Client', 'affiliate' => 'Affiliate'][$role] ?? $role;
+    return ['admin' => 'Admin', 'staff' => 'Staff', 'client' => 'Client', 'affiliate' => 'Growth Partner'][$role] ?? $role;
+}
+
+// Admin-only: registers a staff member (or another admin) directly. The
+// account is approved immediately, has no expiry and skips the program
+// terms (those bind affiliates and clients, not employees).
+// Returns an error message, or null on success.
+function create_team_account(string $token, array $in): ?string
+{
+    $username = strtolower(trim((string) ($in['username'] ?? '')));
+    $email    = strtolower(trim((string) ($in['email'] ?? '')));
+    $name     = trim((string) ($in['full_name'] ?? ''));
+    $pw       = (string) ($in['password'] ?? '');
+    $role     = in_array($in['role'] ?? '', ['staff', 'admin'], true) ? $in['role'] : 'staff';
+
+    if ($name === '')                                           return 'Full name is required.';
+    if (!preg_match('/^[a-z0-9_]{3,20}$/', $username))          return 'Username must be 3–20 letters, numbers or underscores.';
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) return 'Enter a valid email address.';
+    if (strlen($pw) < 8)                                         return 'The temporary password must be at least 8 characters.';
+    if ($pw !== (string) ($in['password_confirm'] ?? ''))        return 'The passwords do not match.';
+
+    $taken = supabase_request('GET', '/rest/v1/profiles?select=id&username=eq.' . urlencode($username), null, $token);
+    if (!empty($taken['body'])) return 'That username is already taken.';
+    if ($email !== '') {
+        $taken = supabase_request('GET', '/rest/v1/profiles?select=id&email=eq.' . urlencode($email), null, $token);
+        if (!empty($taken['body'])) return 'That email already belongs to an account.';
+    }
+
+    $res = supabase_request('POST', '/rest/v1/profiles', [
+        'full_name'     => mb_substr($name, 0, 120),
+        'username'      => $username,
+        'email'         => $email ?: null,
+        'password_hash' => password_hash($pw, PASSWORD_BCRYPT),
+        'phone'         => mb_substr(trim((string) ($in['phone'] ?? '')), 0, 40) ?: null,
+        'job_title'     => mb_substr(trim((string) ($in['job_title'] ?? '')), 0, 80) ?: null,
+        'role'          => $role,
+        'status'        => 'accepted',
+    ], $token, ['Prefer: return=representation']);
+    if ($res['error'] || empty($res['body'][0])) return $res['error'] ?: 'Could not create the account.';
+
+    $new = $res['body'][0];
+    audit_log($token, 'staff_created', 'profile', $new['id'],
+        role_name($role) . ' account for ' . $new['full_name'] . ' (@' . $username . ')' . (!empty($new['job_title']) ? ' — ' . $new['job_title'] : ''));
+    notify($token, 'Welcome to KAM TEAM', 'Your ' . role_name($role) . ' account is ready.', $new['id'], 'all', dashboard_url($role));
+    return null;
 }
 
 function approve_application(string $token, string $userId): ?string
@@ -761,7 +813,7 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
         $out .= '<div class="share" style="margin-top:8px"><input id="share-link" type="text" readonly value="' . e($link) . '">'
               . '<button class="btn btn-sm" type="button" data-copy="share-link">Copy →</button></div>';
     } else {
-        $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your affiliate term has expired. New referrals are not credited until you renew or upgrade.</p>';
+        $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your Growth Partner term has expired. New referrals are not credited until you renew or upgrade.</p>';
     }
     $out .= '<p style="margin:10px 0 0;font-size:12px;color:var(--text-dim)">Clients who sign up with your code are credited to you. When a client you referred pays the 50% advance deposit on a service package, you earn <strong>' . e(pct_label($pct)) . '% of that deposit</strong>. Monthly fees and the remaining setup balance are not commissionable, and no income is guaranteed. '
           . 'Always disclose that you may earn a commission (e.g. "I earn a commission if you hire KAM TEAM through my link").</p></section>';

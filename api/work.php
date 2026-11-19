@@ -3,8 +3,10 @@ require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
 
-// Client Work Documentation & Reporting (SOP-OPS-001) — admin workspace.
-['token' => $token, 'profile' => $profile] = require_role('admin');
+// Client Work Documentation & Reporting (SOP-OPS-001) — admin & staff workspace.
+// Staff can do everything here except approve and deliver client reports.
+['token' => $token, 'profile' => $profile] = require_role(['admin', 'staff']);
+$isAdmin = $profile['role'] === 'admin';
 $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
@@ -17,7 +19,8 @@ $get = fn(string $path) => (is_array($r = supabase_request('GET', $path, null, $
 
 $clients  = $get('/rest/v1/profiles?select=id,full_name,company,username&role=eq.client&status=eq.accepted&deleted_at=is.null&order=full_name.asc');
 $services = $get('/rest/v1/packages?select=id,name&kind=eq.service&order=price.asc');
-$admins   = $get('/rest/v1/profiles?select=full_name&role=eq.admin&deleted_at=is.null&order=full_name.asc');
+// The team (admins + staff) is suggested in every SOP tag field.
+$admins   = $get('/rest/v1/profiles?select=full_name&role=in.(admin,staff)&status=eq.accepted&deleted_at=is.null&order=full_name.asc');
 $clientName = array_column($clients, 'full_name', 'id');
 $pkgName    = array_column($services, 'name', 'id');
 $validClient = fn($id) => isset($clientName[$id]) ? $id : null;
@@ -107,7 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                   : ($to === 'cancelled' ? 'Cancelled: ' . $input['cancel_reason'] . ' (approved by ' . $input['cancel_approved_by'] . ')' : 'Status changed.'));
             task_log($token, $task, $to === 'completed' ? 'completion' : 'update', $note, $task['status'], $to, $s('author_tag', 80));
             if ($to === 'for_review' && $task['reviewer']) {
-                notify($token, 'Task for review: ' . $task['task_code'], $task['title'] . ' is ready for verification (' . $task['reviewer'] . ').', null, 'admin', '/work.php?task=' . $task['id']);
+                foreach (['admin', 'staff'] as $aud) {
+                    notify($token, 'Task for review: ' . $task['task_code'], $task['title'] . ' is ready for verification (' . $task['reviewer'] . ').', null, $aud, '/work.php?task=' . $task['id']);
+                }
             }
             flash('success', $task['task_code'] . ' → ' . task_status_label($to) . '.'); $go('?task=' . $task['id']);
         }
@@ -139,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $report = $repId ? ($get('/rest/v1/client_reports?select=*&id=eq.' . urlencode($repId))[0] ?? null) : null;
 
     // ---- Step 7: QA and approval ----
+    if ($act === 'approve_report' && !$isAdmin) $act = 'save_report';   // staff save the draft; an admin approves
     if (in_array($act, ['save_report', 'approve_report'], true) && $report) {
         if ($report['status'] !== 'draft') {
             $errors[] = 'Only a draft can be edited. Reissue it as a new version instead.';
@@ -179,6 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     // ---- Step 8: delivery ----
     if ($act === 'deliver_report' && $report) {
         $channel = $s('delivery_channel', 80);
+        if (!$isAdmin) $errors[] = 'Only an admin can deliver a client report.';
         if ($report['status'] !== 'approved') $errors[] = 'Only an approved report can be delivered.';
         if ($channel === '') $errors[] = 'Record the delivery channel.';
         if (!$errors) {
@@ -269,18 +276,17 @@ if ($view === 'report') {
     <?= kam_lockup() ?>
     <div style="display:flex;align-items:center;gap:10px">
       <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label admin">Admin</span>
+      <span class="role-label <?= e($profile['role']) ?>"><?= e(role_name($profile['role'])) ?></span>
       <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
     </div>
   </div>
 </header>
 
 <div class="shell">
-<?= app_sidebar([
-    ['label' => 'Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home'],
+<?= app_sidebar(array_merge($isAdmin ? [['label' => 'Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']] : [], [
     ['label' => 'Task tracker',    'href' => '/work.php',            'icon' => 'check'],
     ['label' => 'Client reports',  'href' => '/work.php?view=reports', 'icon' => 'log'],
-], 'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : '/work.php') ?>
+]),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : '/work.php') ?>
 <main class="wrap">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>
   <h1>Client work. <span class="accent">Traceable, verified, reported.</span></h1>
@@ -456,13 +462,16 @@ if ($view === 'report') {
     </fieldset>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn btn-sm" type="submit" name="act" value="save_report">Save draft</button>
-      <button class="btn btn-sm btn-solid" type="submit" name="act" value="approve_report" onclick="return confirm('Approve and freeze this report?')">Approve report →</button>
+      <?php if ($isAdmin): ?><button class="btn btn-sm btn-solid" type="submit" name="act" value="approve_report" onclick="return confirm('Approve and freeze this report?')">Approve report →</button>
+      <?php else: ?><span class="hint" style="align-self:center">An admin approves the report once the QA checklist is complete.</span><?php endif; ?>
     </div>
     <p class="hint" style="margin-top:8px">If QA fails, fix the task records in the tracker first — the accomplishment tables below are rebuilt from them until approval.</p>
   </form>
   <?php else: ?>
   <div class="cols" style="margin-bottom:12px">
-    <?php if ($report['status'] === 'approved'): ?>
+    <?php if ($report['status'] === 'approved' && !$isAdmin): ?>
+    <section class="card"><h2>Deliver <span class="hint">(step 8)</span></h2><p class="hint">Approved and frozen. An admin delivers it to the client.</p></section>
+    <?php elseif ($report['status'] === 'approved'): ?>
     <form method="post" class="card"><?= $hid(['act' => 'deliver_report', 'report_id' => $report['id']]) ?>
       <h2>Deliver <span class="hint">(step 8)</span></h2>
       <div class="field"><label>Channel</label><input name="delivery_channel" required maxlength="80" placeholder="Client dashboard + email" value="Client dashboard"></div>
