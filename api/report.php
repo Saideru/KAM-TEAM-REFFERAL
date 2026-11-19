@@ -29,7 +29,7 @@ if (!$isAdmin) audit_log($token, 'report_viewed', 'client_report', $rep['id'], $
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?= e(report_filename($rep, $cName, $pName)) ?></title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261120b">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261120c">
 </head>
 <body class="report-page">
 <main class="wrap report-doc">

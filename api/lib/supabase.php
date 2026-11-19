@@ -8,18 +8,34 @@ require_once __DIR__ . '/terms.php';
 // Cookie-based session (replaces $_SESSION for serverless/Vercel)
 // =====================================================================
 
-function _enc_key(): string { return hash('sha256', SESSION_SECRET, true); }
-function _enc_iv(): string  { return substr(hash('sha256', 'iv:' . SESSION_SECRET), 0, 16); }
+// The cookie is sealed with AES-256-GCM and a fresh random nonce each time:
+// it can't be read, and any edit to it is detected and rejected (the old
+// CBC format with a fixed IV had no tamper check). A sign-in is valid for
+// SESSION_LIFETIME from login, however the cookie is copied around.
+const SESSION_LIFETIME = 86400 * 30;
+
+function _enc_key(): string { return hash_hmac('sha256', 'kt-session-v2', SESSION_SECRET, true); }
 
 function _encrypt(string $data): string
 {
-    return base64_encode(openssl_encrypt($data, 'aes-256-cbc', _enc_key(), OPENSSL_RAW_DATA, _enc_iv()));
+    $nonce = random_bytes(12);
+    $ct    = openssl_encrypt($data, 'aes-256-gcm', _enc_key(), OPENSSL_RAW_DATA, $nonce, $tag, 'kt_session');
+    return 'v2.' . rtrim(strtr(base64_encode($nonce . $tag . $ct), '+/', '-_'), '=');
 }
 
 function _decrypt(string $data): ?string
 {
-    $raw = openssl_decrypt(base64_decode($data), 'aes-256-cbc', _enc_key(), OPENSSL_RAW_DATA, _enc_iv());
-    return $raw === false ? null : $raw;
+    if (!str_starts_with($data, 'v2.')) return null;          // old/unknown format → signed out
+    $raw = base64_decode(strtr(substr($data, 3), '-_', '+/'), true);
+    if ($raw === false || strlen($raw) < 29) return null;
+    $out = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', _enc_key(), OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16), 'kt_session');
+    return $out === false ? null : $out;
+}
+
+function _cookie_secure(): bool
+{
+    return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
 }
 
 function &_session(): array
@@ -27,12 +43,10 @@ function &_session(): array
     static $store = null;
     if ($store === null) {
         $cookie = $_COOKIE['kt_session'] ?? '';
-        if ($cookie !== '') {
-            $json = _decrypt($cookie);
-            $store = $json ? (json_decode($json, true) ?: []) : [];
-        } else {
-            $store = [];
-        }
+        $json   = $cookie !== '' ? _decrypt($cookie) : null;
+        $store  = $json ? (json_decode($json, true) ?: []) : [];
+        // A sign-in older than SESSION_LIFETIME (or without a login time) is dropped.
+        if (!empty($store['sb']) && (int) ($store['sb']['iat'] ?? 0) < time() - SESSION_LIFETIME) unset($store['sb']);
     }
     return $store;
 }
@@ -40,15 +54,12 @@ function &_session(): array
 function _save_session(): void
 {
     $data = &_session();
-    $encrypted = _encrypt(json_encode($data));
-    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-           || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
-    setcookie('kt_session', $encrypted, [
-        'expires'  => time() + 86400 * 30,
+    setcookie('kt_session', _encrypt(json_encode($data)), [
+        'expires'  => time() + SESSION_LIFETIME,
         'path'     => '/',
-        'httponly'  => true,
+        'httponly' => true,
         'samesite' => 'Lax',
-        'secure'   => $secure,
+        'secure'   => _cookie_secure(),
     ]);
 }
 
@@ -56,7 +67,17 @@ function _clear_session(): void
 {
     $store = &_session();
     $store = [];
-    setcookie('kt_session', '', ['expires' => 1, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax']);
+    setcookie('kt_session', '', ['expires' => 1, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => _cookie_secure()]);
+}
+
+// Signed-in pages must never be served from the browser cache, so the Back
+// button after logout asks the server again (and lands on the login page).
+function no_store_headers(): void
+{
+    if (headers_sent()) return;
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0, private');
+    header('Pragma: no-cache');
+    header('Expires: 0');
 }
 
 // =====================================================================
@@ -223,6 +244,7 @@ function supabase_store_session(array $profile): void
     $session['sb'] = [
         'user_id'  => $profile['id'],
         'username' => $profile['username'],
+        'iat'      => time(),
     ];
     _save_session();
 }
@@ -251,6 +273,7 @@ function supabase_sign_out_local(): void
 
 function require_login(): string
 {
+    no_store_headers();
     $token = supabase_access_token();
     if (!$token) {
         header('Location: /index.php');
@@ -667,6 +690,15 @@ function role_name(string $role): string
     return ['admin' => 'Admin', 'staff' => 'Staff', 'client' => 'Client', 'affiliate' => 'Growth Partner'][$role] ?? $role;
 }
 
+// Turns "the database hasn't been migrated yet" errors into instructions.
+function db_error_message(?string $err): ?string
+{
+    if ($err && str_contains($err, 'profiles_role_check')) {
+        return 'The database does not allow Staff accounts yet. Run supabase/migrations/20261122_staff_role.sql in the Supabase SQL Editor, then try again.';
+    }
+    return $err;
+}
+
 // Admin-only: registers a staff member (or another admin) directly. The
 // account is approved immediately, has no expiry and skips the program
 // terms (those bind affiliates and clients, not employees).
@@ -701,7 +733,7 @@ function create_team_account(string $token, array $in): ?string
         'role'          => $role,
         'status'        => 'accepted',
     ], $token, ['Prefer: return=representation']);
-    if ($res['error'] || empty($res['body'][0])) return $res['error'] ?: 'Could not create the account.';
+    if ($res['error'] || empty($res['body'][0])) return db_error_message($res['error']) ?: 'Could not create the account.';
 
     $new = $res['body'][0];
     audit_log($token, 'staff_created', 'profile', $new['id'],
@@ -869,23 +901,94 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
     }
     $out .= '</section>';
 
-    $out .= '<section class="card" id="network" style="margin-bottom:12px"><h2>People you referred</h2>';
-    if (!$refs) {
-        $out .= '<p class="empty">Nobody yet. Share your link.</p>';
-    } else {
-        $out .= '<div class="table-scroll"><table><thead><tr><th>Name</th><th>Account</th><th>Status</th><th>Joined</th></tr></thead><tbody>';
-        foreach ($refs as $r) {
-            $role = $r['referred']['role'] ?? '';
-            $out .= '<tr><td><strong>' . e($r['referred']['full_name'] ?? '—') . '</strong></td><td><span class="role-badge ' . e($role) . '">' . e(role_name($role)) . '</span></td>'
-                  . '<td><span class="pill ' . e($r['status']) . '">' . e($r['status']) . '</span></td><td style="font-size:12px">' . date('M j, Y', strtotime($r['created_at'])) . '</td></tr>';
-        }
-        $out .= '</tbody></table></div>';
-    }
-    $out .= '</section>';
+    $out .= downline_graph_html($token, $profile);
 
     return $out . '<script>document.querySelectorAll("[data-copy]").forEach(function(btn){btn.addEventListener("click",function(){'
         . 'var i=document.getElementById(btn.dataset.copy);i.select();(navigator.clipboard?navigator.clipboard.writeText(i.value):Promise.reject())'
         . '.catch(function(){document.execCommand("copy");}).finally(function(){btn.textContent="Copied ✓";setTimeout(function(){btn.textContent="Copy →";},1800);});});});</script>';
+}
+
+// ---- Downline graph ---------------------------------------------------
+// Who signed up with this member's code (level 1), who signed up with
+// theirs (level 2), and so on, following profiles.referred_by.
+// UNLI (0) = no limit. Set a number to cap the levels or people shown.
+const UNLI               = 0;
+const DOWNLINE_DEPTH     = UNLI;
+const DOWNLINE_MAX_NODES = UNLI;
+
+// Returns ['kids' => parentId => [profile…], 'levels' => level => count,
+// 'below' => id => people under them, 'total' => n, 'capped' => bool].
+function downline_tree(string $token, string $rootId): array
+{
+    $kids = []; $levels = []; $total = 0; $capped = false;
+    $seen = [$rootId => true];            // guards against a referral loop
+    $frontier = [$rootId];
+    for ($lvl = 1; $frontier && (DOWNLINE_DEPTH === UNLI || $lvl <= DOWNLINE_DEPTH); $lvl++) {
+        $next = [];
+        // Batches keep the in.(…) filter well under URL-length limits.
+        foreach (array_chunk($frontier, 150) as $batch) {
+            $res = supabase_request('GET', '/rest/v1/profiles?select=id,full_name,role,status,affiliate_tier,created_at,referred_by'
+                . '&deleted_at=is.null&order=created_at.asc&referred_by=in.(' . implode(',', array_map('urlencode', $batch)) . ')', null, $token);
+            foreach (is_array($res['body']) && !$res['error'] ? $res['body'] : [] as $r) {
+                if (isset($seen[$r['id']])) continue;
+                if (DOWNLINE_MAX_NODES !== UNLI && $total >= DOWNLINE_MAX_NODES) { $capped = true; break 3; }
+                $seen[$r['id']] = true;
+                $r['level'] = $lvl;
+                $kids[$r['referred_by']][] = $r;
+                $next[] = $r['id'];
+                $levels[$lvl] = ($levels[$lvl] ?? 0) + 1;
+                $total++;
+            }
+        }
+        $frontier = $next;
+    }
+
+    // People under each member, counted once bottom-up (deepest level first).
+    $below = [];
+    $byLevel = [];
+    foreach ($kids as $list) foreach ($list as $k) $byLevel[$k['level']][] = $k;
+    krsort($byLevel);
+    foreach ($byLevel as $list) foreach ($list as $k) {
+        $below[$k['referred_by']] = ($below[$k['referred_by']] ?? 0) + 1 + ($below[$k['id']] ?? 0);
+    }
+    return ['kids' => $kids, 'levels' => $levels, 'below' => $below, 'total' => $total, 'capped' => $capped];
+}
+
+function downline_graph_html(string $token, array $profile): string
+{
+    $t = downline_tree($token, $profile['id']);
+    $out = '<section class="card" id="network" style="margin-bottom:12px"><h2>Your downline</h2>'
+         . '<p class="hint" style="margin:0 0 10px">Everyone who signed up with your code, and everyone who signed up with theirs' . (DOWNLINE_DEPTH === UNLI ? ', all the way down.' : ' — up to ' . DOWNLINE_DEPTH . ' levels.') . '</p>';
+    if (!$t['total']) {
+        return $out . '<p class="empty">Nobody yet. Share your link — people who sign up with your code appear here, and so do the people they bring in.</p></section>';
+    }
+
+    $out .= '<div class="downline-levels"><span class="chip">Total ' . $t['total'] . '</span>';
+    foreach ($t['levels'] as $lvl => $n) $out .= '<span class="chip">Level ' . $lvl . ' · ' . $n . '</span>';
+    $out .= '</div>';
+
+    $render = function (string $id) use (&$render, $t): string {
+        if (empty($t['kids'][$id])) return '';
+        $html = '<ul>';
+        foreach ($t['kids'][$id] as $k) {
+            $role = $k['role'];
+            $type = $role === 'affiliate' ? 'Growth Partner' . (!empty($k['affiliate_tier']) ? ' · ' . tier_label($k['affiliate_tier']) : '') : role_name($role);
+            $n    = $t['below'][$k['id']] ?? 0;
+            $html .= '<li><div class="org-node ' . e($role) . ($k['status'] !== 'accepted' ? ' is-pending' : '') . '" title="Joined ' . e(date('M j, Y', strtotime($k['created_at']))) . '">'
+                   . '<span class="org-lvl">L' . $k['level'] . '</span>'
+                   . '<strong>' . e($k['full_name']) . '</strong>'
+                   . '<span class="org-type">' . e($type) . ($k['status'] !== 'accepted' ? ' · ' . e($k['status']) : '') . '</span>'
+                   . ($n ? '<span class="org-below">' . $n . ' below</span>' : '')
+                   . '</div>' . $render($k['id']) . '</li>';
+        }
+        return $html . '</ul>';
+    };
+
+    $out .= '<div class="org"><div class="org-inner"><ul><li><div class="org-node org-root"><span class="org-lvl">You</span><strong>' . e($profile['full_name']) . '</strong>'
+          . '<span class="org-type">' . e($profile['referral_code'] ?? '') . '</span></div>' . $render($profile['id']) . '</li></ul></div></div>'
+          . '<p class="hint" style="margin:8px 0 0">Scroll sideways on a small screen. Hover a name to see when they joined.'
+          . ($t['capped'] ? ' Showing the first ' . DOWNLINE_MAX_NODES . ' people.' : '') . '</p></section>';
+    return $out;
 }
 
 // =====================================================================
@@ -1066,7 +1169,10 @@ function notif_bell(string $token, array $profile, string $csrf): string
         . '<script>(function(){var d=document.currentScript.previousElementSibling;d.addEventListener("toggle",function(){'
         . 'if(!d.open||!d.querySelector(".notif-count"))return;var f=new FormData();f.append("csrf",d.dataset.csrf);'
         . 'fetch("/notifications.php",{method:"POST",body:f,credentials:"same-origin"}).then(function(){var c=d.querySelector(".notif-count");if(c)c.remove();});});'
-        . 'document.addEventListener("click",function(e){if(d.open&&!d.contains(e.target))d.open=false;});})();</script>';
+        . 'document.addEventListener("click",function(e){if(d.open&&!d.contains(e.target))d.open=false;});'
+        // Back/forward restored this page from memory: ask the server again so
+        // a signed-out visitor is sent to the login page.
+        . 'window.addEventListener("pageshow",function(e){if(e.persisted)location.reload();});})();</script>';
 }
 
 // =====================================================================

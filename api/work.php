@@ -268,7 +268,7 @@ if ($view === 'report') {
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Client work // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261120b">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261120c">
 </head>
 <body>
 <header class="topbar">
