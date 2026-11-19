@@ -9,7 +9,7 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'affiliate', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
 $notice = flash();
 
 if ($ref !== '' && !isset($_GET['mode'])) {
@@ -34,6 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $res = supabase_sign_in($username, $pass);
             if ($res['error']) {
                 $errors[] = 'Invalid credentials.';
+                supabase_request('POST', '/rest/v1/system_logs', ['action' => 'login_failed', 'entity_type' => 'user',
+                    'summary' => 'Failed sign-in for "' . mb_substr($username, 0, 40) . '"', 'ip_address' => client_ip()], null, ['Prefer: return=minimal']);
             } else {
                 supabase_store_session($res['profile']);
                 audit_log(supabase_access_token(), 'login_success', 'user', $res['profile']['id'], 'User signed in');
@@ -45,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old['email']     = trim((string) ($_POST['email'] ?? ''));
         $old['phone']     = trim((string) ($_POST['phone'] ?? ''));
         $old['company']   = trim((string) ($_POST['company'] ?? ''));
-        $old['role']      = in_array($_POST['role'] ?? '', ['client_basic', 'client_standard', 'referral'], true) ? $_POST['role'] : 'referral';
+        $old['role']      = in_array($_POST['role'] ?? '', ['client', 'affiliate'], true) ? $_POST['role'] : 'affiliate';
         $confirm          = (string) ($_POST['password_confirm'] ?? '');
         $old['business_nature']    = in_array($_POST['business_nature'] ?? '', BUSINESS_NATURES, true) ? $_POST['business_nature'] : '';
         $old['business_struggles'] = array_values(array_intersect(array_keys(BUSINESS_STRUGGLES), (array) ($_POST['business_struggles'] ?? [])));
@@ -59,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($old['email'] !== '' && !filter_var($old['email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid email address.';
         if (strlen($pass) < 8)                            $errors[] = 'Password must be at least 8 characters.';
         if ($pass !== $confirm)                           $errors[] = 'Passwords do not match.';
-        $old['terms'] = array_intersect_key((array) ($_POST['terms'] ?? []), TERMS_SECTIONS + ['signature' => 1]);
+        $old['terms'] = terms_posted();
         foreach (terms_missing($old['terms']) as $item) $errors[] = 'Read and accept ' . $item . '.';
 
         if (!$errors) {
@@ -93,7 +95,7 @@ $csrf = csrf_token();
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KAM Team // Referral Program</title>
+  <title>KAM Team // Growth Partnership Program</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
@@ -105,13 +107,13 @@ $csrf = csrf_token();
     <div><?= kam_lockup('reversed') ?></div>
 
     <div>
-      <span class="label"><span class="dot"></span>KAM TEAM // REFERRAL PROGRAM</span>
+      <span class="label"><span class="dot"></span>KAM TEAM // GROWTH PARTNERSHIP PROGRAM</span>
       <h1>Solve business problems with the power of <span class="accent">people + AI.</span></h1>
-      <p class="lead">Join the KAM Team referral program. Build your network, track referrals and manage commissions in one place.</p>
+      <p class="lead">Join the KAM Team Growth Partnership Program. Refer clients, track your referrals and manage commissions in one place.</p>
 
       <ol class="steps">
         <li><span class="label" style="color:var(--orange)">01 //</span><span>Register and choose your tier — <strong style="color:var(--white)">Basic</strong> or <strong style="color:var(--orange)">Standard</strong>.</span></li>
-        <li><span class="label" style="color:var(--orange)">02 //</span><span>Build your referral network. Standard unlocks unilevel commissions.</span></li>
+        <li><span class="label" style="color:var(--orange)">02 //</span><span>Refer clients. You earn 10% of each client's 50% advance deposit.</span></li>
         <li><span class="label" style="color:var(--orange)">03 //</span><span>Track commissions, lifecycle and payouts from your dashboard.</span></li>
       </ol>
     </div>
@@ -178,19 +180,19 @@ $csrf = csrf_token();
           <div class="field">
             <label>Account tier</label>
             <div class="role-pick" role="radiogroup">
-              <label class="role-option <?= $old['role'] === 'referral' ? 'active' : '' ?>">
-                <input type="radio" name="role" value="referral" <?= $old['role'] === 'referral' ? 'checked' : '' ?>>
+              <label class="role-option <?= $old['role'] === 'affiliate' ? 'active' : '' ?>">
+                <input type="radio" name="role" value="affiliate" <?= $old['role'] === 'affiliate' ? 'checked' : '' ?>>
                 <span class="role-icon">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                 </span>
-                <span class="role-info"><strong>Referral</strong><small>Start here — choose a tier after sign-up</small></span>
+                <span class="role-info"><strong>Affiliate</strong><small>Refer clients — choose Basic or Standard after sign-up</small></span>
               </label>
-              <label class="role-option <?= $old['role'] === 'client_basic' ? 'active' : '' ?>">
-                <input type="radio" name="role" value="client_basic" <?= $old['role'] === 'client_basic' ? 'checked' : '' ?>>
+              <label class="role-option <?= $old['role'] === 'client' ? 'active' : '' ?>">
+                <input type="radio" name="role" value="client" <?= $old['role'] === 'client' ? 'checked' : '' ?>>
                 <span class="role-icon">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
                 </span>
-                <span class="role-info"><strong>Client</strong><small>Track your KAM Team services</small></span>
+                <span class="role-info"><strong>Client</strong><small>Buy KAM Team services — includes your own referral code</small></span>
               </label>
             </div>
           </div>
@@ -236,32 +238,14 @@ $csrf = csrf_token();
             <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Were you invited? Enter their code so they get credited.</small>
           </div>
 
-          <fieldset class="biz-fieldset terms-checklist" id="terms-checklist">
-            <legend><span class="label kicker">04 // Program terms</span>Read and accept each section before creating your account.</legend>
-            <p class="terms-meta"><?= e(TERMS_PROGRAM) ?> · Manual v<?= e(TERMS_VERSION) ?> · Effective <?= e(TERMS_EFFECTIVE) ?> · Governed by the laws of the Republic of the Philippines</p>
-
-            <?php foreach (terms_sections() as $key => $sec): $ok = !empty($old['terms'][$key]); ?>
-              <div class="terms-item <?= $ok ? 'done' : '' ?>">
-                <details>
-                  <summary><span class="terms-num">§<?= e($sec['number']) ?></span> <?= e($sec['title']) ?> <span class="terms-read">Read</span></summary>
-                  <ul><?php foreach ($sec['rules'] as $rule): ?><li><?= e($rule) ?></li><?php endforeach; ?></ul>
-                </details>
-                <label class="terms"><input type="checkbox" name="terms[<?= e($key) ?>]" value="1" <?= $ok ? 'checked' : '' ?>><span><?= e($sec['agree']) ?></span></label>
-              </div>
-            <?php endforeach; ?>
-
-            <div class="terms-item terms-sign <?= !empty($old['terms']['signature']) ? 'done' : '' ?>">
-              <label class="terms"><input type="checkbox" name="terms[signature]" value="1" <?= !empty($old['terms']['signature']) ? 'checked' : '' ?>><span><strong>E-signature.</strong> <?= e(TERMS_SIGNATURE) ?></span></label>
-            </div>
-            <p class="terms-progress" aria-live="polite"><span id="terms-count">0</span> of <?= count(TERMS_SECTIONS) + 1 ?> accepted. We record the date, time, IP address and version you accept.</p>
-          </fieldset>
+          <?= terms_checklist($old['terms']) ?>
 
           <button class="btn btn-solid" type="submit" id="reg-submit">Create account <span aria-hidden="true">→</span></button>
         </form>
         <p class="switch">Already registered? <button type="button" data-mode="login">Sign in</button></p>
       </div>
 
-      <p class="foot">KAM TEAM // REFERRAL PROGRAM</p>
+      <p class="foot">KAM TEAM // GROWTH PARTNERSHIP PROGRAM</p>
     </div>
   </section>
 </main>
@@ -291,18 +275,8 @@ $csrf = csrf_token();
         if (radio.checked) radio.closest('.role-option').classList.add('active');
       });
     });
-    // Terms checklist: count accepted items; keep "Create account" disabled until all are ticked.
-    var boxes = document.querySelectorAll('#terms-checklist input[type=checkbox]');
-    var submit = document.getElementById('reg-submit');
-    function refresh() {
-      var n = 0;
-      boxes.forEach(function (b) { b.closest('.terms-item').classList.toggle('done', b.checked); if (b.checked) n++; });
-      document.getElementById('terms-count').textContent = n;
-      submit.disabled = n < boxes.length;
-    }
-    boxes.forEach(function (b) { b.addEventListener('change', refresh); });
-    refresh();
   })();
 </script>
+<?= terms_checklist_script('reg-submit') ?>
 </body>
 </html>

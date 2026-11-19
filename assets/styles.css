@@ -216,6 +216,8 @@ a:hover { color: var(--text); text-decoration: underline; }
 .topbar .role-label.client_basic { background: var(--green-dim); color: var(--green); border: 1px solid var(--border-light); }
 .topbar .role-label.client_standard { background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 .topbar .role-label.referral { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
+.topbar .role-label.client { background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
+.topbar .role-label.affiliate { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 
 /* ---------- Dashboard layout ---------- */
 .wrap { max-width: 1200px; margin: 0 auto; padding: 28px 16px 56px; }
@@ -281,6 +283,8 @@ td { padding: 10px 8px 10px 0; border-bottom: 1px solid var(--border); vertical-
 .role-badge.client_basic { background: var(--green-dim); color: var(--green); border: 1px solid var(--border-light); }
 .role-badge.client_standard { background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 .role-badge.referral { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
+.role-badge.client { background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
+.role-badge.affiliate { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 
 /* ---------- Client service items ---------- */
 .svc-list { display: grid; gap: 10px; }
@@ -506,7 +510,7 @@ section[id], div[id="overview"] { scroll-margin-top: 16px; }
 .terms-item .terms { margin: 0; font-size: 12px; color: var(--text); }
 .terms-sign .terms { line-height: 1.5; }
 .terms-progress { margin: 4px 0 0; font-size: 11px; color: var(--text-dim); }
-#reg-submit:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 .struggle-option { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface-2); font-size: 12px; line-height: 1.35; cursor: pointer; }
 .struggle-option input { accent-color: var(--orange); margin-top: 1px; flex: none; }
 .struggle-option:has(input:checked) { border-color: var(--rust); background: var(--orange-dim); }
@@ -537,4 +541,49 @@ section[id], div[id="overview"] { scroll-margin-top: 16px; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
   .roulette-actions { width: 100%; }
+}
+
+/* ---------- Shared helpers ---------- */
+.hint { font-size: 12px; color: var(--text-dim); }
+
+/* ---------- Client account / affiliate account switch ---------- */
+.account-switch { display: flex; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--border-light); flex-wrap: wrap; }
+.account-switch a { padding: 8px 14px; font-size: 13px; font-weight: 600; color: var(--text-muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.account-switch a.on { color: var(--rust); border-bottom-color: var(--orange); }
+.account-switch small { font-family: var(--font); font-weight: 400; color: var(--text-dim); margin-left: 4px; }
+
+/* ---------- Client work tracker (SOP-OPS-001) ---------- */
+.status-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.status-strip a { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border-light); border-radius: 999px; color: var(--text-muted); text-decoration: none; }
+.status-strip a b { font-family: var(--font); color: var(--text); margin-left: 2px; }
+.status-strip a.on { border-color: var(--rust); background: var(--orange-dim); color: var(--rust); }
+.tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border-light); white-space: nowrap; }
+.tag-alt { background: var(--orange-dim); border-color: rgba(184, 66, 15, .25); }
+.task-log { display: flex; flex-direction: column; gap: 8px; }
+.task-log-item { border-left: 3px solid var(--border-light); padding: 4px 0 4px 10px; font-size: 13px; }
+.task-log-item.kind-evidence { border-left-color: var(--green); }
+.task-log-item.kind-blocker { border-left-color: var(--red); }
+.task-log-item.kind-completion { border-left-color: var(--orange); }
+.task-log-item.kind-review { border-left-color: var(--rust); }
+
+/* ---------- Audit log categories ---------- */
+.log-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.log-cats a { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border-light); border-radius: 999px; color: var(--text-muted); text-decoration: none; }
+.log-cats a.on { border-color: var(--rust); background: var(--orange-dim); color: var(--rust); }
+.log-row { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.log-cat { display: inline-block; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 0 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border-light); color: var(--text-muted); }
+.log-cat-auth { color: var(--rust); }
+.log-cat-tasks, .log-cat-reports { background: var(--orange-dim); color: var(--rust); }
+
+/* ---------- Client reports ---------- */
+.report-doc .report-sec { margin-bottom: 18px; }
+.report-doc .report-sec h2 { font-size: 15px; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border-light); }
+.report-doc p { font-size: 13px; line-height: 1.55; }
+.report-head { display: flex; gap: 16px; align-items: center; margin: 0 0 18px; flex-wrap: wrap; }
+.report-head h1 { margin: 2px 0; }
+.report-actions { display: flex; gap: 8px; justify-content: space-between; margin: 0 0 14px; }
+@media print {
+  .no-print, .topbar, .sidebar { display: none !important; }
+  body.report-page { background: #fff; }
+  .report-doc a { color: inherit; }
 }

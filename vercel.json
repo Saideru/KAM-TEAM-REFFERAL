@@ -17,6 +17,10 @@
     { "source": "/pending.php", "destination": "/api/pending.php" },
     { "source": "/notifications.php", "destination": "/api/notifications.php" },
     { "source": "/business.php", "destination": "/api/business.php" },
-    { "source": "/kyc.php", "destination": "/api/kyc.php" }
+    { "source": "/kyc.php", "destination": "/api/kyc.php" },
+    { "source": "/dashboard-affiliate.php", "destination": "/api/dashboard-affiliate.php" },
+    { "source": "/terms.php", "destination": "/api/terms.php" },
+    { "source": "/work.php", "destination": "/api/work.php" },
+    { "source": "/report.php", "destination": "/api/report.php" }
   ]
 }

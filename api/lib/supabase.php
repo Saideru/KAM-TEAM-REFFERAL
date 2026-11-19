@@ -144,10 +144,10 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         }
     }
 
-    // Standard can never be self-assigned at sign-up: it requires a paid,
-    // admin-approved activation (see approve_activation()).
-    $role = in_array($meta['role'] ?? '', ['client_basic', 'referral'], true)
-        ? $meta['role'] : 'referral';
+    // Client = permanent account that buys service packages.
+    // Affiliate = refers clients; picks Basic/Standard after approval.
+    $role = in_array($meta['role'] ?? '', ['client', 'affiliate'], true)
+        ? $meta['role'] : 'affiliate';
 
     // Every new account waits behind the approval wall until an admin accepts
     // it; the lifecycle clock starts at approval (see approve_application()).
@@ -164,6 +164,7 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         'business_nature'    => $meta['business_nature'] ?? null,
         'business_struggles' => array_values($meta['business_struggles'] ?? []),
         'business_notes'     => $meta['business_notes'] ?? null,
+        'terms_version'      => TERMS_VERSION,
         // assigned_admin stays null until an admin approves the application,
         // so rejected sign-ups don't consume a roulette turn.
     ], null, ['Prefer: return=representation']);
@@ -274,17 +275,15 @@ function current_profile(?string $token = null): ?array
     return $cached ?: null;
 }
 
+// Client and admin accounts are permanent. Only an affiliate's term
+// expires; it can still sign in during the grace period to renew or
+// upgrade, and is terminated once the grace period has passed (§4.3, §6.1).
 function check_account_status(?array $profile): bool
 {
     if (!$profile) return false;
     if ($profile['status'] !== 'accepted') return false;
     if (!empty($profile['deleted_at'])) return false;
-
-    if ($profile['lifecycle_expires_at'] && $profile['role'] !== 'admin') {
-        if (strtotime($profile['lifecycle_expires_at']) < time()) {
-            return false;
-        }
-    }
+    if (($profile['role'] ?? '') === 'affiliate' && affiliate_state($profile) === 'terminated') return false;
     return true;
 }
 
@@ -297,11 +296,10 @@ function is_walled(?array $profile): bool
 function dashboard_url(string $role): string
 {
     return [
-        'admin'           => '/dashboard-admin.php',
-        'client_basic'    => '/dashboard-client-basic.php',
-        'client_standard' => '/dashboard-client-standard.php',
-        'referral'        => '/dashboard-referral.php',
-    ][$role] ?? '/dashboard-referral.php';
+        'admin'     => '/dashboard-admin.php',
+        'client'    => '/dashboard-client.php',
+        'affiliate' => '/dashboard-affiliate.php',
+    ][$role] ?? '/dashboard-affiliate.php';
 }
 
 function redirect_by_role(?string $welcome = null): void
@@ -313,8 +311,15 @@ function redirect_by_role(?string $welcome = null): void
         exit;
     }
 
-    header('Location: ' . dashboard_url($profile['role'] ?? 'referral') . ($welcome ? '?welcome=1' : ''));
+    header('Location: ' . dashboard_url($profile['role'] ?? 'affiliate') . ($welcome ? '?welcome=1' : ''));
     exit;
+}
+
+// True when the user still has to accept the current manual version.
+function terms_outdated(?array $profile): bool
+{
+    return $profile && ($profile['role'] ?? '') !== 'admin'
+        && ($profile['terms_version'] ?? '') !== TERMS_VERSION;
 }
 
 function require_role(string|array $allowed): array
@@ -338,9 +343,17 @@ function require_role(string|array $allowed): array
     }
 
     if ($role !== 'admin' && !check_account_status($profile)) {
-        flash('error', 'Your account is inactive or expired. Contact support.');
+        flash('error', $role === 'affiliate' && affiliate_state($profile) === 'terminated'
+            ? 'Your affiliate account expired and its grace period has ended. Contact support.'
+            : 'Your account is inactive. Contact support.');
         supabase_sign_out_local();
         header('Location: /index.php');
+        exit;
+    }
+
+    // Every member must accept the current program manual before continuing.
+    if (terms_outdated($profile)) {
+        header('Location: /terms.php');
         exit;
     }
 
@@ -365,58 +378,134 @@ function audit_log(string $token, string $action, ?string $entityType = null, ?s
     ], $token, ['Prefer: return=minimal']);
 }
 
+// Audit-log categories for the admin log viewer. An action belongs to the
+// first category whose exact names or prefixes match it; anything else
+// falls under "other". New actions only need a matching prefix or name.
+const LOG_CATEGORIES = [
+    'auth'     => ['label' => 'Login & terms',             'actions' => ['login_success', 'login_failed', 'logout', 'terms_accepted'], 'prefixes' => []],
+    'tasks'    => ['label' => 'Client task log',           'actions' => [], 'prefixes' => ['task_']],
+    'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
+    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
+    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
+    'kyc'      => ['label' => 'KYC',                       'actions' => [], 'prefixes' => ['kyc_']],
+    'packages' => ['label' => 'Packages',                  'actions' => ['create_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
+    'roulette' => ['label' => 'Roulette',                  'actions' => ['reassign'], 'prefixes' => ['roulette_']],
+];
+
+function log_category(string $action): string
+{
+    foreach (LOG_CATEGORIES as $key => $c) {
+        if (in_array($action, $c['actions'], true)) return $key;
+        foreach ($c['prefixes'] as $pre) if (str_starts_with($action, $pre)) return $key;
+    }
+    return 'other';
+}
+
+// PostgREST filter selecting one category's rows ('' for all).
+function log_category_filter(string $cat): string
+{
+    if (!isset(LOG_CATEGORIES[$cat])) {
+        if ($cat !== 'other') return '';
+        $parts = [];
+        foreach (LOG_CATEGORIES as $c) {
+            foreach ($c['actions'] as $a) $parts[] = 'action.neq.' . $a;
+            foreach ($c['prefixes'] as $p) $parts[] = 'action.not.like.' . $p . '*';
+        }
+        return '&and=(' . implode(',', $parts) . ')';
+    }
+    $c = LOG_CATEGORIES[$cat];
+    $parts = [];
+    if ($c['actions']) $parts[] = 'action.in.(' . implode(',', $c['actions']) . ')';
+    foreach ($c['prefixes'] as $p) $parts[] = 'action.like.' . $p . '*';
+    return '&or=(' . implode(',', $parts) . ')';
+}
+
 // =====================================================================
 // Tiers, activation & approvals
 // =====================================================================
 
-// Lifecycle length per client role, in months.
-const TIER_MONTHS = ['client_basic' => 3, 'client_standard' => 27];
+// ---- Affiliate term (Manual §4, §6) ----------------------------------
+// Basic:    3 months from activation, +3 months per Qualified Client,
+//           no renewal (extend only by referrals or upgrading).
+// Standard: US$100 per 2-year term. First payment adds a 3-month
+//           activation bonus; each payment adds 2 years; +3 months per
+//           Qualified Client. Upgrading from Basic restarts the clock at
+//           payment date + 3 months + 2 years (§6.4).
+const AFFILIATE_GRACE_DAYS = ['basic' => 7, 'standard' => 30];
 
-function tier_expiry(string $role): ?string
+// none (no plan yet) | active | grace | terminated
+function affiliate_state(array $p): string
 {
-    $months = TIER_MONTHS[$role] ?? 0;
-    return $months > 0 ? date('c', strtotime("+{$months} months")) : null;
+    if (empty($p['affiliate_tier']) || empty($p['lifecycle_expires_at'])) return 'none';
+    $exp = strtotime($p['lifecycle_expires_at']);
+    if ($exp >= time()) return 'active';
+    $grace = AFFILIATE_GRACE_DAYS[$p['affiliate_tier']] ?? 7;
+    return time() <= $exp + $grace * 86400 ? 'grace' : 'terminated';
 }
 
-function tier_role(string $tier): string
+function affiliate_grace_ends(array $p): ?int
 {
-    return $tier === 'standard' ? 'client_standard' : 'client_basic';
+    if (empty($p['affiliate_tier']) || empty($p['lifecycle_expires_at'])) return null;
+    return strtotime($p['lifecycle_expires_at']) + (AFFILIATE_GRACE_DAYS[$p['affiliate_tier']] ?? 7) * 86400;
 }
 
-// Turns a user into a Basic or Standard client and starts their lifecycle.
+// New expiry after an approved Basic or Standard plan payment.
+function affiliate_new_expiry(array $p, string $tier): string
+{
+    if ($tier === 'standard' && ($p['affiliate_tier'] ?? '') === 'standard' && !empty($p['lifecycle_expires_at'])) {
+        // Renewal: +2 years on top of the current expiry (stackable).
+        $base = max(strtotime($p['lifecycle_expires_at']), time());
+        return date('c', strtotime('+2 years', $base));
+    }
+    return date('c', strtotime($tier === 'standard' ? '+27 months' : '+3 months'));
+}
+
+function tier_label(?string $tier): string
+{
+    return ['basic' => 'Basic', 'standard' => 'Standard'][$tier ?? ''] ?? 'No plan';
+}
+
+// Puts an affiliate on Basic or Standard and sets their term.
 function activate_account(string $token, string $userId, string $tier): ?string
 {
-    $role = tier_role($tier);
+    $p = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($userId), null, $token)['body'][0] ?? null;
+    if (!$p) return 'User not found.';
     $res  = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), [
-        'role'                 => $role,
+        'affiliate_tier'       => $tier,
         'status'               => 'accepted',
-        'lifecycle_expires_at' => tier_expiry($role),
+        'lifecycle_expires_at' => affiliate_new_expiry($p, $tier),
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
 
-    // Mark the user's own referral link as active now that they converted.
     supabase_request('PATCH', '/rest/v1/referrals?status=eq.pending&referred_id=eq.' . urlencode($userId),
         ['status' => 'active'], $token, ['Prefer: return=minimal']);
     return null;
 }
 
+// A pending affiliate plan request (activation) or client deposit.
 function fetch_activation_txn(string $token, string $txnId): ?array
 {
-    $res = supabase_request('GET', '/rest/v1/transactions?select=*,packages!transactions_package_id_fkey(name,tier)&type=eq.activation&id=eq.' . urlencode($txnId), null, $token);
+    $res = supabase_request('GET', '/rest/v1/transactions?select=*,packages!transactions_package_id_fkey(name,tier,kind,price,monthly_price)&type=in.(activation,deposit)&id=eq.' . urlencode($txnId), null, $token);
     return $res['body'][0] ?? null;
 }
 
-// Admin approves a pending paid activation: completes the transaction and
-// upgrades the user to the tier of the package they paid for.
+// Admin approves a pending request:
+//  - activation: an affiliate's Basic/Standard plan → sets their term.
+//    Never commissionable (§3.2).
+//  - deposit:    a client's 50% advance deposit on a service package →
+//    work can start; the referrer earns the Outright Commission (§3.1).
 function approve_activation(string $token, string $txnId, string $adminId): ?string
 {
     $txn = fetch_activation_txn($token, $txnId);
     if (!$txn)                         return 'Transaction not found.';
     if ($txn['status'] !== 'pending')  return 'This request was already reviewed.';
+    $isDeposit = $txn['type'] === 'deposit';
+    $pkgName   = $txn['packages']['name'] ?? 'package';
 
-    $tier = $txn['packages']['tier'] ?? 'standard';
-    $err  = activate_account($token, $txn['user_id'], $tier);
-    if ($err) return $err;
+    if (!$isDeposit) {
+        $err = activate_account($token, $txn['user_id'], $txn['packages']['tier'] ?? 'standard');
+        if ($err) return $err;
+    }
 
     $res = supabase_request('PATCH', '/rest/v1/transactions?status=eq.pending&id=eq.' . urlencode($txnId), [
         'status' => 'completed', 'reviewed_by' => $adminId, 'reviewed_at' => date('c'),
@@ -424,29 +513,35 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
     if ($res['error']) return $res['error'];
     if (empty($res['body'])) return 'This request was already reviewed.';
 
-    // Roulette: the package goes to the next admin in the 1-2-3 rotation.
     $owner = roulette_assign($token, $txnId, $txn['user_id']);
 
-    audit_log($token, 'approve_activation', 'transaction', $txnId,
-        'Approved ' . ($txn['packages']['name'] ?? $tier) . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—')
+    audit_log($token, $isDeposit ? 'approve_deposit' : 'approve_activation', 'transaction', $txnId,
+        'Approved ' . $pkgName . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—')
         . ($owner ? ' → roulette: ' . $owner['full_name'] : ''));
-    notify($token, ucfirst($tier) . ' account approved',
-        'Your ' . ($txn['packages']['name'] ?? ucfirst($tier)) . ' plan is now active. Your countdown has started.'
-        . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
 
-    pay_referral_commission($token, $txn);
+    if ($isDeposit) {
+        notify($token, 'Deposit confirmed — ' . $pkgName,
+            'Your 50% advance deposit is confirmed and setup work can begin. Progress reports will appear in your dashboard.'
+            . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
+        pay_referral_commission($token, $txn);
+    } else {
+        $tier = $txn['packages']['tier'] ?? 'standard';
+        notify($token, ucfirst($tier) . ' affiliate plan active',
+            'Your ' . $pkgName . ' plan is active. Your countdown has started.'
+            . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
+    }
     return null;
 }
 
 // =====================================================================
-// Referral commission
+// Referral commission (Manual §3)
 // =====================================================================
 
-// Percent of an activation paid to whoever referred the buyer.
+// Outright Commission rate, as a % of the client's 50% advance deposit.
 function commission_pct(string $token): float
 {
     $raw = get_settings($token, ['referral_commission_pct'])['referral_commission_pct'];
-    return $raw === '' ? 5.0 : max(0.0, min(100.0, (float) $raw));
+    return $raw === '' ? 10.0 : max(0.0, min(100.0, (float) $raw));
 }
 
 // 5.0 -> "5", 7.5 -> "7.5", 10.0 -> "10"
@@ -455,39 +550,53 @@ function pct_label(float $pct): string
     return rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.');
 }
 
-// Credits the referrer when a referred user's paid activation is approved.
-// Free (zero-amount) activations earn nothing. The unique index on
-// (user_id, source_user_id) makes a repeat approval a no-op rather than
-// paying the same commission twice.
+// Credits the referrer when a referred client's 50% advance deposit is
+// approved. Only deposits are commissionable — never affiliate plan
+// payments, the setup balance or monthly fees (§3.3). One commission per
+// deposit (unique index on user_id + source_txn_id). A Qualified Client
+// also adds 3 months to an affiliate referrer's term (§4.1, §4.2).
 function pay_referral_commission(string $token, array $txn): void
 {
+    if (($txn['type'] ?? '') !== 'deposit') return;
     $amount = (float) $txn['amount'];
     $pct    = commission_pct($token);
-    if ($amount <= 0 || $pct <= 0) return;
+    if ($amount <= 0) return;
 
-    $buyerRes = supabase_request('GET', '/rest/v1/profiles?select=id,full_name,username,referred_by&id=eq.' . urlencode($txn['user_id']), null, $token);
-    $buyer    = $buyerRes['body'][0] ?? null;
-    $referrer = $buyer['referred_by'] ?? null;
-    if (!$referrer) return;
+    $buyer    = supabase_request('GET', '/rest/v1/profiles?select=id,full_name,username,referred_by&id=eq.' . urlencode($txn['user_id']), null, $token)['body'][0] ?? null;
+    $refId    = $buyer['referred_by'] ?? null;
+    if (!$refId) return;
+    $referrer = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($refId), null, $token)['body'][0] ?? null;
+    if (!$referrer || !empty($referrer['deleted_at'])) return;
+    if ($referrer['role'] === 'affiliate' && affiliate_state($referrer) === 'terminated') return;
+
+    // Qualified Client: +3 months on the affiliate's current term.
+    if ($referrer['role'] === 'affiliate' && !empty($referrer['lifecycle_expires_at'])) {
+        $base = max(strtotime($referrer['lifecycle_expires_at']), time());
+        supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($refId),
+            ['lifecycle_expires_at' => date('c', strtotime('+3 months', $base))], $token, ['Prefer: return=minimal']);
+    }
 
     $commission = round($amount * $pct / 100, 2);
     if ($commission <= 0) return;
 
     $res = supabase_request('POST', '/rest/v1/transactions', [
-        'user_id'        => $referrer,
+        'user_id'        => $refId,
         'package_id'     => $txn['package_id'] ?? null,
         'source_user_id' => $txn['user_id'],
+        'source_txn_id'  => $txn['id'],
         'amount'         => $commission,
         'type'           => 'commission',
         'status'         => 'completed',
-        'notes'          => pct_label($pct) . '% referral commission from ' . ($buyer['full_name'] ?? 'a referral'),
+        'notes'          => pct_label($pct) . '% Outright Commission on the advance deposit of ' . ($buyer['full_name'] ?? 'a referred client'),
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return;
 
     audit_log($token, 'referral_commission', 'transaction', $txn['id'],
-        'Paid $' . number_format($commission, 2) . ' (' . pct_label($pct) . '%) to referrer of ' . ($buyer['username'] ?? $txn['user_id']));
+        'Paid $' . number_format($commission, 2) . ' (' . pct_label($pct) . '% of deposit) to referrer of ' . ($buyer['username'] ?? $txn['user_id']));
     notify($token, 'You earned $' . number_format($commission, 2),
-        ($buyer['full_name'] ?? 'Someone you referred') . ' activated a paid plan, so you earned ' . pct_label($pct) . '% of it.', $referrer);
+        ($buyer['full_name'] ?? 'A client you referred') . ' paid the advance deposit on ' . ($txn['packages']['name'] ?? 'a package')
+        . '. You earned ' . pct_label($pct) . '% of it'
+        . ($referrer['role'] === 'affiliate' ? ' and 3 more months on your affiliate term.' : '.'), $refId);
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -502,8 +611,8 @@ function reject_activation(string $token, string $txnId, string $adminId, string
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
 
-    audit_log($token, 'reject_activation', 'transaction', $txnId, 'Rejected payment ref ' . ($txn['payment_ref'] ?? '—') . ($reason !== '' ? ' — ' . $reason : ''));
-    notify($token, 'Plan request not approved',
+    audit_log($token, $txn['type'] === 'deposit' ? 'reject_deposit' : 'reject_activation', 'transaction', $txnId, 'Rejected payment ref ' . ($txn['payment_ref'] ?? '—') . ($reason !== '' ? ' — ' . $reason : ''));
+    notify($token, $txn['type'] === 'deposit' ? 'Deposit not approved' : 'Plan request not approved',
         trim(($txn['packages']['name'] ?? 'Your plan') . ' was not approved. ' . $reason) . ' You can submit a new request.', $txn['user_id']);
     return null;
 }
@@ -514,7 +623,7 @@ function reject_activation(string $token, string $txnId, string $adminId, string
 
 function role_name(string $role): string
 {
-    return ['admin' => 'Admin', 'client_basic' => 'Basic client', 'client_standard' => 'Standard client', 'referral' => 'Referral'][$role] ?? $role;
+    return ['admin' => 'Admin', 'client' => 'Client', 'affiliate' => 'Affiliate'][$role] ?? $role;
 }
 
 function approve_application(string $token, string $userId): ?string
@@ -524,9 +633,10 @@ function approve_application(string $token, string $userId): ?string
     if (!$p) return 'User not found.';
     if (!in_array($p['status'], ['pending', 'rejected'], true)) return 'This application was already reviewed.';
 
+    // Clients are permanent. An affiliate's term starts when their
+    // Basic/Standard plan request is approved, not here.
     $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), [
         'status' => 'accepted', 'review_note' => null,
-        'lifecycle_expires_at' => tier_expiry($p['role']),   // clock starts on approval
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
 
@@ -628,6 +738,73 @@ function business_card(string $token, array $profile, string $csrf): string
 }
 
 // =====================================================================
+// Affiliate account block (affiliate dashboard + each client's Affiliate tab)
+// =====================================================================
+
+// Referral code + link, commission rule, earnings and the people referred.
+function affiliate_account_html(string $token, array $profile, bool $canRefer = true): string
+{
+    $uid  = urlencode($profile['id']);
+    $pct  = commission_pct($token);
+    $link = APP_URL . '/index.php?ref=' . urlencode($profile['referral_code'] ?? '');
+
+    $refs = supabase_request('GET', '/rest/v1/referrals?select=created_at,status,referred:profiles!referrals_referred_id_fkey(full_name,role)&referrer_id=eq.' . $uid . '&order=created_at.desc', null, $token)['body'] ?? [];
+    $coms = supabase_request('GET', '/rest/v1/transactions?select=amount,created_at,notes,packages(name),source:profiles!transactions_source_user_id_fkey(full_name)&type=eq.commission&status=eq.completed&user_id=eq.' . $uid . '&order=created_at.desc&limit=50', null, $token)['body'] ?? [];
+    $refs = is_array($refs) ? $refs : [];
+    $coms = is_array($coms) ? $coms : [];
+    $earned  = array_sum(array_map(fn($c) => (float) $c['amount'], $coms));
+    $clients = count(array_filter($refs, fn($r) => ($r['referred']['role'] ?? '') === 'client'));
+
+    $out  = '<section class="card" id="share" style="margin-bottom:12px">'
+          . '<span class="label">Your referral code — ' . e($profile['referral_code'] ?? '') . '</span>';
+    if ($canRefer) {
+        $out .= '<div class="share" style="margin-top:8px"><input id="share-link" type="text" readonly value="' . e($link) . '">'
+              . '<button class="btn btn-sm" type="button" data-copy="share-link">Copy →</button></div>';
+    } else {
+        $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your affiliate term has expired. New referrals are not credited until you renew or upgrade.</p>';
+    }
+    $out .= '<p style="margin:10px 0 0;font-size:12px;color:var(--text-dim)">Clients who sign up with your code are credited to you. When a client you referred pays the 50% advance deposit on a service package, you earn <strong>' . e(pct_label($pct)) . '% of that deposit</strong>. Monthly fees and the remaining setup balance are not commissionable, and no income is guaranteed. '
+          . 'Always disclose that you may earn a commission (e.g. "I earn a commission if you hire KAM TEAM through my link").</p></section>';
+
+    $out .= '<section class="grid">'
+          . '<div class="card"><span class="label">Referred</span><div class="big">' . count($refs) . '</div></div>'
+          . '<div class="card"><span class="label">Clients</span><div class="big cyan">' . $clients . '</div></div>'
+          . '<div class="card"><span class="label">Commissions</span><div class="big">' . count($coms) . '</div></div>'
+          . '<div class="card"><span class="label">Earned</span><div class="big green">$' . number_format($earned, 2) . '</div></div></section>';
+
+    $out .= '<section class="card" id="earnings" style="margin-bottom:12px"><h2>Commission ledger</h2>';
+    if (!$coms) {
+        $out .= '<p class="empty">No commissions yet.</p>';
+    } else {
+        $out .= '<div class="table-scroll"><table><thead><tr><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
+        foreach ($coms as $c) {
+            $out .= '<tr><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
+                  . '<td style="color:var(--green)">$' . number_format((float) $c['amount'], 2) . '</td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td></tr>';
+        }
+        $out .= '</tbody></table></div>';
+    }
+    $out .= '</section>';
+
+    $out .= '<section class="card" id="network" style="margin-bottom:12px"><h2>People you referred</h2>';
+    if (!$refs) {
+        $out .= '<p class="empty">Nobody yet. Share your link.</p>';
+    } else {
+        $out .= '<div class="table-scroll"><table><thead><tr><th>Name</th><th>Account</th><th>Status</th><th>Joined</th></tr></thead><tbody>';
+        foreach ($refs as $r) {
+            $role = $r['referred']['role'] ?? '';
+            $out .= '<tr><td><strong>' . e($r['referred']['full_name'] ?? '—') . '</strong></td><td><span class="role-badge ' . e($role) . '">' . e(role_name($role)) . '</span></td>'
+                  . '<td><span class="pill ' . e($r['status']) . '">' . e($r['status']) . '</span></td><td style="font-size:12px">' . date('M j, Y', strtotime($r['created_at'])) . '</td></tr>';
+        }
+        $out .= '</tbody></table></div>';
+    }
+    $out .= '</section>';
+
+    return $out . '<script>document.querySelectorAll("[data-copy]").forEach(function(btn){btn.addEventListener("click",function(){'
+        . 'var i=document.getElementById(btn.dataset.copy);i.select();(navigator.clipboard?navigator.clipboard.writeText(i.value):Promise.reject())'
+        . '.catch(function(){document.execCommand("copy");}).finally(function(){btn.textContent="Copied ✓";setTimeout(function(){btn.textContent="Copy →";},1800);});});});</script>';
+}
+
+// =====================================================================
 // Roulette — round-robin assignment of approved packages to admins
 // =====================================================================
 
@@ -659,7 +836,7 @@ function roulette_claim_account(string $token, string $userId): ?array
     $admin = supabase_request('GET', '/rest/v1/profiles?select=id,full_name&id=eq.' . urlencode($adminId), null, $token)['body'][0] ?? null;
     if ($isNew) {
         notify($token, 'Roulette: a new account is yours',
-            ($user['full_name'] ?? 'A new account') . ' (' . role_name($user['role'] ?? 'referral') . ') was added to your list'
+            ($user['full_name'] ?? 'A new account') . ' (' . role_name($user['role'] ?? 'affiliate') . ') was added to your list'
             . (!empty($user['business_nature']) ? ' · ' . $user['business_nature'] : '')
             . (!empty($user['business_struggles']) ? '. Needs help with: ' . implode(', ', array_map('struggle_label', $user['business_struggles'])) : '') . '.',
             $adminId, 'all', '/dashboard-admin.php?mine=1#roulette');
@@ -771,7 +948,7 @@ function notify(string $token, string $title, ?string $body = null, ?string $use
 // Personal notifications plus broadcasts to everyone or to the user's role.
 function fetch_notifications(string $token, array $profile, int $limit = 20): array
 {
-    $role = $profile['role'] ?? 'referral';
+    $role = $profile['role'] ?? 'affiliate';
     $or   = 'or=(user_id.eq.' . $profile['id'] . ',and(user_id.is.null,audience.in.(all,' . $role . ')))';
     $res  = supabase_request('GET', '/rest/v1/notifications?select=*&' . $or . '&order=created_at.desc&limit=' . $limit, null, $token);
     return is_array($res['body']) && !$res['error'] ? $res['body'] : [];
@@ -812,12 +989,12 @@ function notif_bell(string $token, array $profile, string $csrf): string
 // Scheduled package changes (1-7 day notice, then permanent)
 // =====================================================================
 
-const PACKAGE_FIELDS = ['name', 'description', 'price', 'monthly_price', 'commission_outright', 'commission_unilevel', 'tier', 'active'];
+const PACKAGE_FIELDS = ['name', 'description', 'price', 'monthly_price', 'commission_outright', 'commission_unilevel', 'tier', 'kind', 'active'];
 
 function describe_package_changes(array $old, array $new): string
 {
     $label = ['name' => 'Name', 'description' => 'Description', 'price' => 'One-time price', 'monthly_price' => 'Monthly fee',
-              'commission_outright' => 'Outright commission', 'commission_unilevel' => 'Unilevel %', 'tier' => 'Tier', 'active' => 'Availability'];
+              'commission_outright' => 'Outright commission', 'commission_unilevel' => 'Unilevel %', 'tier' => 'Tier', 'kind' => 'Kind', 'active' => 'Availability'];
     $fmt = function (string $k, $v): string {
         if ($k === 'active') return $v ? 'available' : 'hidden';
         if (in_array($k, ['price', 'monthly_price', 'commission_outright'], true)) return '$' . number_format((float) $v, 2);

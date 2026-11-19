@@ -94,6 +94,46 @@ function client_ip(): string
     return trim(explode(',', $raw)[0]) ?: 'unknown';
 }
 
+// The checklist block shown at sign-up and on /terms.php.
+// $checked: the posted terms[] values, to keep ticks after a failed submit.
+function terms_checklist(array $checked, string $kicker = '04 // Program terms'): string
+{
+    $items = '';
+    foreach (terms_sections() as $key => $sec) {
+        $ok = !empty($checked[$key]);
+        $rules = '';
+        foreach ($sec['rules'] as $rule) $rules .= '<li>' . e($rule) . '</li>';
+        $items .= '<div class="terms-item' . ($ok ? ' done' : '') . '"><details>'
+            . '<summary><span class="terms-num">§' . e($sec['number']) . '</span> ' . e($sec['title']) . ' <span class="terms-read">Read</span></summary>'
+            . '<ul>' . $rules . '</ul></details>'
+            . '<label class="terms"><input type="checkbox" name="terms[' . e($key) . ']" value="1"' . ($ok ? ' checked' : '') . '><span>' . e($sec['agree']) . '</span></label></div>';
+    }
+    $sig = !empty($checked['signature']);
+    return '<fieldset class="biz-fieldset terms-checklist" id="terms-checklist">'
+        . '<legend><span class="label kicker">' . e($kicker) . '</span>Read and accept each section before continuing.</legend>'
+        . '<p class="terms-meta">' . e(TERMS_PROGRAM) . ' · Manual v' . e(TERMS_VERSION) . ' · Effective ' . e(TERMS_EFFECTIVE) . ' · Governed by the laws of the Republic of the Philippines</p>'
+        . $items
+        . '<div class="terms-item terms-sign' . ($sig ? ' done' : '') . '"><label class="terms"><input type="checkbox" name="terms[signature]" value="1"' . ($sig ? ' checked' : '') . '><span><strong>E-signature.</strong> ' . e(TERMS_SIGNATURE) . '</span></label></div>'
+        . '<p class="terms-progress" aria-live="polite"><span id="terms-count">0</span> of ' . (count(TERMS_SECTIONS) + 1) . ' accepted. We record the date, time, IP address and version you accept.</p>'
+        . '</fieldset>';
+}
+
+// Counts ticks and keeps $submitId disabled until every item is accepted.
+function terms_checklist_script(string $submitId): string
+{
+    return '<script>(function(){var boxes=document.querySelectorAll("#terms-checklist input[type=checkbox]"),'
+        . 'submit=document.getElementById(' . json_encode($submitId) . ');function refresh(){var n=0;'
+        . 'boxes.forEach(function(b){b.closest(".terms-item").classList.toggle("done",b.checked);if(b.checked)n++;});'
+        . 'document.getElementById("terms-count").textContent=n;submit.disabled=n<boxes.length;}'
+        . 'boxes.forEach(function(b){b.addEventListener("change",refresh);});refresh();})();</script>';
+}
+
+// Only the known checklist keys from a POST.
+function terms_posted(): array
+{
+    return array_intersect_key((array) ($_POST['terms'] ?? []), TERMS_SECTIONS + ['signature' => 1]);
+}
+
 // The row stored in public.consents for a user who accepted everything.
 function terms_consent_record(string $userId): array
 {

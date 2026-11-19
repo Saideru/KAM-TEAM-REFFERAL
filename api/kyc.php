@@ -2,7 +2,7 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 
-['token' => $token, 'profile' => $profile] = require_role(['client_basic', 'client_standard', 'referral']);
+['token' => $token, 'profile' => $profile] = require_role(['client', 'affiliate']);
 $userId = $profile['id'];
 $errors = [];
 $notice = flash();
