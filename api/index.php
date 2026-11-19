@@ -9,7 +9,7 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => ''];
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'referral', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
 $notice = flash();
 
 if ($ref !== '' && !isset($_GET['mode'])) {
@@ -59,7 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($old['email'] !== '' && !filter_var($old['email'], FILTER_VALIDATE_EMAIL)) $errors[] = 'Enter a valid email address.';
         if (strlen($pass) < 8)                            $errors[] = 'Password must be at least 8 characters.';
         if ($pass !== $confirm)                           $errors[] = 'Passwords do not match.';
-        if (empty($_POST['terms']))                       $errors[] = 'Accept program terms to continue.';
+        $old['terms'] = array_intersect_key((array) ($_POST['terms'] ?? []), TERMS_SECTIONS + ['signature' => 1]);
+        foreach (terms_missing($old['terms']) as $item) $errors[] = 'Read and accept ' . $item . '.';
 
         if (!$errors) {
             $res = supabase_sign_up($username, $pass, [
@@ -72,6 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'business_nature'    => $old['business_nature'],
                 'business_struggles' => $old['business_struggles'],
                 'business_notes'     => $old['business_notes'] ?: null,
+                'terms'              => $old['terms'],
             ]);
 
             if ($res['error']) {
@@ -234,8 +236,27 @@ $csrf = csrf_token();
             <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Were you invited? Enter their code so they get credited.</small>
           </div>
 
-          <label class="terms"><input type="checkbox" name="terms" value="1" required>          <span>I agree to the KAM Team program terms and authorize account communication.</span></label>
-          <button class="btn btn-solid" type="submit">Create account <span aria-hidden="true">→</span></button>
+          <fieldset class="biz-fieldset terms-checklist" id="terms-checklist">
+            <legend><span class="label kicker">04 // Program terms</span>Read and accept each section before creating your account.</legend>
+            <p class="terms-meta"><?= e(TERMS_PROGRAM) ?> · Manual v<?= e(TERMS_VERSION) ?> · Effective <?= e(TERMS_EFFECTIVE) ?> · Governed by the laws of the Republic of the Philippines</p>
+
+            <?php foreach (terms_sections() as $key => $sec): $ok = !empty($old['terms'][$key]); ?>
+              <div class="terms-item <?= $ok ? 'done' : '' ?>">
+                <details>
+                  <summary><span class="terms-num">§<?= e($sec['number']) ?></span> <?= e($sec['title']) ?> <span class="terms-read">Read</span></summary>
+                  <ul><?php foreach ($sec['rules'] as $rule): ?><li><?= e($rule) ?></li><?php endforeach; ?></ul>
+                </details>
+                <label class="terms"><input type="checkbox" name="terms[<?= e($key) ?>]" value="1" <?= $ok ? 'checked' : '' ?>><span><?= e($sec['agree']) ?></span></label>
+              </div>
+            <?php endforeach; ?>
+
+            <div class="terms-item terms-sign <?= !empty($old['terms']['signature']) ? 'done' : '' ?>">
+              <label class="terms"><input type="checkbox" name="terms[signature]" value="1" <?= !empty($old['terms']['signature']) ? 'checked' : '' ?>><span><strong>E-signature.</strong> <?= e(TERMS_SIGNATURE) ?></span></label>
+            </div>
+            <p class="terms-progress" aria-live="polite"><span id="terms-count">0</span> of <?= count(TERMS_SECTIONS) + 1 ?> accepted. We record the date, time, IP address and version you accept.</p>
+          </fieldset>
+
+          <button class="btn btn-solid" type="submit" id="reg-submit">Create account <span aria-hidden="true">→</span></button>
         </form>
         <p class="switch">Already registered? <button type="button" data-mode="login">Sign in</button></p>
       </div>
@@ -270,6 +291,17 @@ $csrf = csrf_token();
         if (radio.checked) radio.closest('.role-option').classList.add('active');
       });
     });
+    // Terms checklist: count accepted items; keep "Create account" disabled until all are ticked.
+    var boxes = document.querySelectorAll('#terms-checklist input[type=checkbox]');
+    var submit = document.getElementById('reg-submit');
+    function refresh() {
+      var n = 0;
+      boxes.forEach(function (b) { b.closest('.terms-item').classList.toggle('done', b.checked); if (b.checked) n++; });
+      document.getElementById('terms-count').textContent = n;
+      submit.disabled = n < boxes.length;
+    }
+    boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+    refresh();
   })();
 </script>
 </body>

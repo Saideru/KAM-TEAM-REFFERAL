@@ -11,6 +11,7 @@ create extension if not exists pgcrypto with schema extensions;
 -- Roles: admin | client_basic | client_standard | referral
 -- Status: pending | accepted | suspended
 -- ---------------------------------------------------------------------
+drop table if exists public.consents cascade;
 drop table if exists public.roulette_members cascade;
 drop sequence if exists public.roulette_seq;
 drop table if exists public.package_changes cascade;
@@ -232,6 +233,24 @@ create index system_logs_action_idx on public.system_logs (action);
 create index system_logs_created_idx on public.system_logs (created_at desc);
 
 -- ---------------------------------------------------------------------
+-- 06b // CONSENTS  (program terms checklist accepted at sign-up —
+--   version, sections, date/time, IP and device; Manual Appendix A)
+-- ---------------------------------------------------------------------
+create table public.consents (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references public.profiles (id) on delete cascade,
+  program       text not null,
+  terms_version text not null,
+  sections      jsonb not null default '{}'::jsonb,
+  signature     text not null,
+  ip_address    text,
+  user_agent    text,
+  accepted_at   timestamptz not null default now()
+);
+
+create index consents_user_idx on public.consents (user_id, accepted_at desc);
+
+-- ---------------------------------------------------------------------
 -- 07 // HELPER FUNCTIONS
 -- ---------------------------------------------------------------------
 create or replace function public.touch_updated_at()
@@ -352,6 +371,7 @@ alter table public.app_settings    enable row level security;
 alter table public.notifications   enable row level security;
 alter table public.package_changes enable row level security;
 alter table public.kyc_submissions enable row level security;
+alter table public.consents        enable row level security;
 
 -- ---------------------------------------------------------------------
 -- 09 // SEED SETTINGS + DEFAULT PACKAGES

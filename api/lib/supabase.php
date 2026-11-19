@@ -2,6 +2,7 @@
 // KAMTEAM // Supabase client — serverless-compatible (cookie sessions for Vercel)
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/terms.php';
 
 // =====================================================================
 // Cookie-based session (replaces $_SESSION for serverless/Vercel)
@@ -121,7 +122,13 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
     $username = strtolower(trim($username));
     $email    = strtolower(trim($meta['email'] ?? ''));
 
-    $exists = supabase_request('GET', '/rest/v1/profiles?select=id&username=eq.' . urlencode($username));
+    // No account is created until every section of the program terms
+    // checklist has been accepted (see lib/terms.php).
+    if (terms_missing((array) ($meta['terms'] ?? []))) {
+        return ['error' => 'Accept every section of the program terms to continue.', 'profile' => null];
+    }
+
+    $exists =supabase_request('GET', '/rest/v1/profiles?select=id&username=eq.' . urlencode($username));
     if (!empty($exists['body'])) {
         return ['error' => 'That username is already taken.', 'profile' => null];
     }
@@ -166,7 +173,20 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
     }
     $new = $res['body'][0] ?? null;
     if ($new) {
-        $who = ($new['full_name'] ?? $username) . ' applied as ' . role_name($role)
+        // Record the acceptance. If it can't be stored, undo the sign-up so
+        // there is never an account without a consent record.
+        $consent = supabase_request('POST', '/rest/v1/consents', terms_consent_record($new['id']), null, ['Prefer: return=minimal']);
+        if ($consent['error']) {
+            supabase_request('DELETE', '/rest/v1/profiles?id=eq.' . urlencode($new['id']), null, null, ['Prefer: return=minimal']);
+            return ['error' => 'Could not record your acceptance of the program terms. Please try again.', 'profile' => null];
+        }
+        supabase_request('POST', '/rest/v1/system_logs', [
+            'actor_id' => $new['id'], 'action' => 'terms_accepted', 'entity_type' => 'profile', 'entity_id' => $new['id'],
+            'summary'  => TERMS_PROGRAM . ' v' . TERMS_VERSION . ' — ' . count(TERMS_SECTIONS) . ' sections + e-signature',
+            'ip_address' => client_ip(),
+        ], null, ['Prefer: return=minimal']);
+
+        $who =($new['full_name'] ?? $username) . ' applied as ' . role_name($role)
              . (!empty($new['business_nature']) ? ' (' . $new['business_nature'] . ')' : '') . '.'
              . (!empty($new['business_struggles']) ? ' Needs help with: ' . implode(', ', array_map('struggle_label', $new['business_struggles'])) . '.' : '');
         notify(SUPABASE_SERVICE_KEY, 'New account application', $who, null, 'admin', '/dashboard-admin.php#approvals');
