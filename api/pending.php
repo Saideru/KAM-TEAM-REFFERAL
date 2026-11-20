@@ -19,7 +19,7 @@ $first    = explode(' ', $profile['full_name'])[0];
   <?php if (!$rejected): ?><meta http-equiv="refresh" content="60"><?php endif; ?>
   <title>Application <?= $rejected ? 'not approved' : 'under review' ?> // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261120c">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121a">
 </head>
 <body>
 <header class="topbar">

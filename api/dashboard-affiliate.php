@@ -106,7 +106,7 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Growth Partner // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261120c">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121a">
 </head>
 <body>
 <header class="topbar">
