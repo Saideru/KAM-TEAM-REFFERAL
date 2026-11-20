@@ -268,7 +268,7 @@ if ($view === 'report') {
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Client work // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121b">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
 </head>
 <body>
 <header class="topbar">
@@ -286,6 +286,7 @@ if ($view === 'report') {
 <?= app_sidebar(array_merge($isAdmin ? [['label' => 'Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']] : [], [
     ['label' => 'Task tracker',    'href' => '/work.php',            'icon' => 'check'],
     ['label' => 'Client reports',  'href' => '/work.php?view=reports', 'icon' => 'log'],
+    ['label' => 'Program docs →',  'href' => '/report.php?doc=components', 'icon' => 'brief'],
 ]),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : '/work.php') ?>
 <main class="wrap">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>

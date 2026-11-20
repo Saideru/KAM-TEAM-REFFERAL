@@ -78,13 +78,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         }
     }
 
+    // ---- Recycle bin: put something back into circulation ----
+    if ($act === 'restore_txn') {
+        $tid = (string) ($_POST['txn_id'] ?? '');
+        $res = supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($tid) . '&status=in.(failed,reversed)',
+            ['status' => 'pending', 'reviewed_by' => null, 'reviewed_at' => null], $token, ['Prefer: return=representation']);
+        if (!$res['error'] && !empty($res['body'])) {
+            audit_log($token, 'restore_transaction', 'transaction', $tid, 'Restored to pending for review');
+            flash('success', 'Transaction restored — it is back in Approvals.'); $back('trash'); exit;
+        }
+        $errors[] = $res['error'] ?: 'Could not restore that transaction.';
+    }
+
+    if ($act === 'restore_task') {
+        $tid = (string) ($_POST['task_id'] ?? '');
+        $res = supabase_request('PATCH', '/rest/v1/client_tasks?id=eq.' . urlencode($tid) . '&status=eq.cancelled',
+            ['status' => 'in_progress', 'cancel_reason' => null, 'cancel_approved_by' => null], $token, ['Prefer: return=representation']);
+        if (!$res['error'] && !empty($res['body'])) {
+            audit_log($token, 'restore_task', 'client_task', $tid, 'Restored ' . ($res['body'][0]['task_code'] ?? '') . ' to In Progress');
+            flash('success', 'Task restored to In Progress.'); $back('trash'); exit;
+        }
+        $errors[] = $res['error'] ?: 'Could not restore that task.';
+    }
+
+    if ($act === 'restore_package') {
+        $pid = (string) ($_POST['pkg_id'] ?? '');
+        $res = supabase_request('PATCH', '/rest/v1/packages?id=eq.' . urlencode($pid), ['active' => true], $token, ['Prefer: return=representation']);
+        if (!$res['error'] && !empty($res['body'])) {
+            audit_log($token, 'restore_package', 'package', $pid, 'Package put back on sale: ' . ($res['body'][0]['name'] ?? ''));
+            flash('success', 'Package is on sale again.'); $back('trash'); exit;
+        }
+        $errors[] = $res['error'] ?: 'Could not restore that package.';
+    }
+
     if ($act === 'restore_user') {
         $uid = $_POST['user_id'] ?? '';
         if ($uid) {
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), ['deleted_at' => null, 'status' => 'pending'], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
-                audit_log($token, 'restore', 'profile', $uid, 'User restored');
-                flash('success', 'User restored.'); header('Location: /dashboard-admin.php#users'); exit;
+                audit_log($token, 'restore', 'profile', $uid, 'Account restored from the recycle bin');
+                flash('success', 'Account restored. It is back in Approvals until you accept it.'); $back('trash'); exit;
             }
             $errors[] = $res['error'];
         }
@@ -460,6 +493,17 @@ $clientCount   = count(array_filter($allProfiles, fn($p) => $p['role'] === 'clie
 $gpCount       = count(array_filter($allProfiles, fn($p) => $p['role'] === 'client' && !empty($p['affiliate_tier']) && empty($p['deleted_at'])));
 
 $clients = array_filter($allProfiles, fn($p) => $p['role'] === 'client' && empty($p['deleted_at']));
+
+// ---- Recycle bin (admin only) -------------------------------------------
+// Everything an admin or a staff member took out of circulation, with the
+// action that put it there. Nothing is erased, so all of it can come back.
+$liveProfiles = array_values(array_filter($allProfiles, fn($p) => empty($p['deleted_at'])));
+$binUsers     = array_values(array_filter($allProfiles, fn($p) => !empty($p['deleted_at'])));
+$binTxns      = array_values(array_filter($allTxns, fn($t) => in_array($t['status'], ['failed', 'reversed'], true)));
+$binPkgs      = array_values(array_filter($allPkgs, fn($p) => empty($p['active'])));
+$binTasksRes  = supabase_request('GET', '/rest/v1/client_tasks?select=id,task_code,title,status,cancel_reason,cancel_approved_by,updated_at,client:profiles!client_tasks_client_id_fkey(full_name)&status=eq.cancelled&order=updated_at.desc&limit=100', null, $token);
+$binTasks     = is_array($binTasksRes['body']) && !$binTasksRes['error'] ? $binTasksRes['body'] : [];
+$trashCount   = count($binUsers) + count($binTxns) + count($binPkgs) + count($binTasks);
 $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 ?>
 <!doctype html>
@@ -469,7 +513,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>A</text></svg>">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121b">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
 </head>
 <body>
 <header class="topbar">
@@ -496,7 +540,10 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     ['label' => 'Services',     'panel' => 'services',     'icon' => 'tool'],
     ['label' => 'Notify',       'panel' => 'notify',       'icon' => 'bell'],
     ['label' => 'Audit logs',   'panel' => 'logs',         'icon' => 'log'],
+    ['label' => 'Recycle bin',  'panel' => 'trash',        'icon' => 'trash', 'count' => $trashCount],
     ['label' => 'Client work →', 'href' => '/work.php',     'icon' => 'check'],
+    ['label' => 'My referral account →', 'href' => '/dashboard-affiliate.php', 'icon' => 'link'],
+    ['label' => 'Program docs →', 'href' => '/report.php?doc=components', 'icon' => 'log'],
 ], 'Admin', 'users') ?>
 <main class="wrap">
   <span class="label"><span class="dot"></span>Mission control // <?= e($profile['full_name'] ?? '') ?></span>
@@ -563,28 +610,26 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       </form>
     </details>
 
-    <div class="card"><h2>All users</h2>
+    <div class="card"><h2>All users<?= $binUsers ? ' <span class="hint">· ' . count($binUsers) . ' in the <a href="/dashboard-admin.php#trash" onclick="document.querySelector(\'.admin-tab[data-panel=trash]\').click()">recycle bin</a></span>' : '' ?></h2>
       <div class="table-scroll"><table>
         <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Lifecycle</th><th>Code</th><th>Actions</th></tr></thead>
         <tbody>
-        <?php foreach ($allProfiles as $p): $deleted = !empty($p['deleted_at']); ?>
-          <tr style="<?= $deleted ? 'opacity:.5' : '' ?>">
-            <td><strong><?= e($p['full_name']) ?></strong><?= $deleted ? ' <span style="color:var(--red)">[DEL]</span>' : '' ?></td>
+        <?php foreach ($liveProfiles as $p): ?>
+          <tr>
+            <td><strong><?= e($p['full_name']) ?></strong></td>
             <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
             <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'client' ? '<br><span class="hint">Growth Partner · ' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
             <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
             <td style="font-size:12px"><?php if ($p['role'] !== 'client'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>Client permanent<br><span class="hint">no partner plan</span><?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
-            <td><?php if ($deleted): ?>
-              <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form>
-            <?php else: ?>
+            <td>
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 <a class="btn btn-sm" href="/dashboard-admin.php?edit_user=<?= e($p['id']) ?>#users">Edit</a>
                 <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_role"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_role"><?php foreach ($roleOptions as $ro): ?><option value="<?= e($ro) ?>" <?= $p['role'] === $ro ? 'selected' : '' ?>><?= e(role_name($ro)) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
                 <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_status"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_status"><?php foreach ($statusOptions as $so): ?><option <?= $p['status'] === $so ? 'selected' : '' ?>><?= e($so) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
                 <form method="post" class="inline-form" onsubmit="return confirm('Soft-delete this user?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="soft_delete"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Trash</button></form>
               </div>
-            <?php endif; ?></td>
+            </td>
           </tr>
         <?php endforeach; ?>
         </tbody>
@@ -939,6 +984,89 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <button class="btn btn-sm btn-solid" type="submit">Send notification →</button>
       </form>
     </div>
+  </div>
+
+  <!-- RECYCLE BIN -->
+  <div id="panel-trash" class="admin-panel">
+    <div class="card" style="margin-bottom:12px"><h2>Recycle bin</h2>
+      <p style="font-size:13px;color:var(--text-dim);margin:0">Everything you or your staff took out of circulation. Nothing here is erased, so all of it can be put back. Who did what, and when, is in the <a href="/dashboard-admin.php#logs" onclick="document.querySelector('.admin-tab[data-panel=logs]').click()">audit log</a>.</p>
+      <?php if (!$trashCount): ?><p class="empty" style="margin-top:10px">The recycle bin is empty.</p><?php endif; ?>
+    </div>
+
+    <?php if ($binUsers): ?>
+    <div class="card" style="margin-bottom:12px"><h2>Deleted accounts <span class="hint">(<?= count($binUsers) ?>)</span></h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Deleted</th><th>Code</th><th></th></tr></thead>
+        <tbody><?php foreach ($binUsers as $p): ?>
+          <tr>
+            <td><strong><?= e($p['full_name']) ?></strong><?php if (!empty($p['email'])): ?><br><span class="hint"><?= e($p['email']) ?></span><?php endif; ?></td>
+            <td style="font-size:12px"><?= e($p['username']) ?></td>
+            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span></td>
+            <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($p['deleted_at'])) ?></td>
+            <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
+            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form></td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div>
+      <p class="hint" style="margin:8px 0 0">A restored account goes back to Pending, so approve it again in Approvals. Its referral code, referrals and commissions are kept.</p>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($binTxns): ?>
+    <div class="card" style="margin-bottom:12px"><h2>Cancelled &amp; rejected payments <span class="hint">(<?= count($binTxns) ?>)</span></h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th>User</th><th>Package</th><th>Amount</th><th>Why</th><th>When</th><th></th></tr></thead>
+        <tbody><?php foreach ($binTxns as $t): ?>
+          <tr>
+            <td><strong><?= e($t['profiles']['full_name'] ?? '—') ?></strong><br><span class="hint"><?= e($t['type']) ?></span></td>
+            <td style="font-size:12px"><?= e($t['packages']['name'] ?? '—') ?><?= !empty($t['payment_ref']) ? '<br><span class="hint">ref ' . e($t['payment_ref']) . '</span>' : '' ?></td>
+            <td>$<?= number_format((float) $t['amount'], 2) ?></td>
+            <td style="font-size:12px"><?= e($t['notes'] ?? '—') ?></td>
+            <td style="font-size:12px"><?= date('M j, Y', strtotime($t['reviewed_at'] ?? $t['created_at'])) ?></td>
+            <td><form method="post" class="inline-form" onsubmit="return confirm('Put this payment back in Approvals?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_txn"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form></td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div>
+      <p class="hint" style="margin:8px 0 0">Restoring sets the payment back to pending so you can approve or reject it again in Approvals.</p>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($binTasks): ?>
+    <div class="card" style="margin-bottom:12px"><h2>Cancelled client tasks <span class="hint">(<?= count($binTasks) ?>)</span></h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Task</th><th>Client</th><th>Reason</th><th>Approved by</th><th>When</th><th></th></tr></thead>
+        <tbody><?php foreach ($binTasks as $t): ?>
+          <tr>
+            <td><a href="/work.php?task=<?= e($t['id']) ?>"><strong><?= e($t['task_code']) ?></strong> <?= e($t['title']) ?></a></td>
+            <td style="font-size:12px"><?= e($t['client']['full_name'] ?? '—') ?></td>
+            <td style="font-size:12px"><?= e($t['cancel_reason'] ?? '—') ?></td>
+            <td style="font-size:12px"><span class="tag"><?= e($t['cancel_approved_by'] ?: '—') ?></span></td>
+            <td style="font-size:12px"><?= date('M j, Y', strtotime($t['updated_at'])) ?></td>
+            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_task"><input type="hidden" name="task_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form></td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div>
+      <p class="hint" style="margin:8px 0 0">A restored task comes back as In Progress with its task log and evidence intact.</p>
+    </div>
+    <?php endif; ?>
+
+    <?php if ($binPkgs): ?>
+    <div class="card"><h2>Retired packages <span class="hint">(<?= count($binPkgs) ?>)</span></h2>
+      <div class="table-scroll"><table>
+        <thead><tr><th>Name</th><th>Kind</th><th>Price</th><th>Monthly</th><th></th></tr></thead>
+        <tbody><?php foreach ($binPkgs as $pk): ?>
+          <tr>
+            <td><strong><?= e($pk['name']) ?></strong><?= !empty($pk['description']) ? '<br><span class="hint">' . e(mb_substr($pk['description'], 0, 70)) . '</span>' : '' ?></td>
+            <td><span class="role-badge <?= ($pk['kind'] ?? 'service') === 'service' ? 'client' : 'affiliate' ?>"><?= ($pk['kind'] ?? 'service') === 'service' ? 'Service' : 'Growth Partner · ' . e(tier_label($pk['tier'])) ?></span></td>
+            <td>$<?= number_format((float) $pk['price'], 2) ?></td>
+            <td style="font-size:12px"><?= (float) ($pk['monthly_price'] ?? 0) > 0 ? '$' . number_format((float) $pk['monthly_price'], 2) . '/mo' : '—' ?></td>
+            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_package"><input type="hidden" name="pkg_id" value="<?= e($pk['id']) ?>"><button class="btn btn-sm" type="submit">Put back on sale</button></form></td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div>
+      <p class="hint" style="margin:8px 0 0">Hidden packages keep every past transaction that points at them.</p>
+    </div>
+    <?php endif; ?>
   </div>
 
   <!-- AUDIT LOGS -->

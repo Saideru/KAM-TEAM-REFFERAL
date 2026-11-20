@@ -3,10 +3,47 @@ require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
 
-// Printable client report (SOP-OPS-001 Appendix B). Admins see any version;
-// a client sees only their own delivered reports. Print → Save as PDF uses
-// the SOP file name as the page title.
+// Printable documents. Two kinds, so the app keeps one print-styled page:
+//   ?id=…               a client report (SOP-OPS-001 Appendix B). Admins and
+//                       staff see any version; a client sees only their own
+//                       delivered ones.
+//   ?doc=components     the program reference for admins and staff.
+// Print → Save as PDF uses the document's file name as the page title.
 ['token' => $token, 'profile' => $profile] = require_role(['admin', 'staff', 'client']);
+
+if (($_GET['doc'] ?? '') === 'components') {
+    require_once __DIR__ . '/lib/docs.php';
+    if (!is_team($profile)) { http_response_code(403); header('Location: ' . dashboard_url($profile['role'])); exit; }
+    $back = $profile['role'] === 'admin' ? '/dashboard-admin.php' : '/work.php';
+    ?><!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KAM-TEAM_Program-Components_v<?= e(PROGRAM_DOC_VERSION) ?></title>
+  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
+</head>
+<body class="report-page">
+<main class="wrap report-doc program-doc">
+  <div class="report-actions no-print">
+    <a class="btn btn-sm btn-ghost" href="<?= e($back) ?>">← Back</a>
+    <button class="btn btn-sm btn-solid" type="button" onclick="window.print()">Print / save as PDF</button>
+  </div>
+  <header class="report-head">
+    <?= kam_lockup() ?>
+    <div><span class="label">KAM Growth Partnership Program · internal reference</span>
+      <h1><?= e(PROGRAM_DOC_TITLE) ?></h1>
+      <p class="hint">Version <?= e(PROGRAM_DOC_VERSION) ?> · <?= e(PROGRAM_DOC_DATE) ?> · What every account type can do inside the program</p></div>
+  </header>
+  <?= program_doc_html() ?>
+  <p class="hint" style="margin-top:20px">KAM TEAM · Program components v<?= e(PROGRAM_DOC_VERSION) ?> · generated from the live program.</p>
+</main>
+</body>
+</html>
+<?php
+    exit;
+}
+
 $id  = (string) ($_GET['id'] ?? '');
 $rep = supabase_request('GET', '/rest/v1/client_reports?select=*,packages(name),client:profiles!client_reports_client_id_fkey(full_name)&id=eq.' . urlencode($id), null, $token)['body'][0] ?? null;
 
@@ -29,7 +66,7 @@ if (!$isAdmin) audit_log($token, 'report_viewed', 'client_report', $rep['id'], $
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?= e(report_filename($rep, $cName, $pName)) ?></title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121b">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
 </head>
 <body class="report-page">
 <main class="wrap report-doc">

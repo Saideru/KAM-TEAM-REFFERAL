@@ -443,12 +443,12 @@ function audit_log(string $token, string $action, ?string $entityType = null, ?s
 // falls under "other". New actions only need a matching prefix or name.
 const LOG_CATEGORIES = [
     'auth'     => ['label' => 'Login & terms',             'actions' => ['login_success', 'login_failed', 'logout', 'terms_accepted'], 'prefixes' => []],
-    'tasks'    => ['label' => 'Client task log',           'actions' => [], 'prefixes' => ['task_']],
+    'tasks'    => ['label' => 'Client task log',           'actions' => ['restore_task'], 'prefixes' => ['task_']],
     'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
     'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
-    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
+    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'restore_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
     'kyc'      => ['label' => 'KYC',                       'actions' => [], 'prefixes' => ['kyc_']],
-    'packages' => ['label' => 'Packages',                  'actions' => ['create_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
+    'packages' => ['label' => 'Packages',                  'actions' => ['create_package', 'restore_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
     'roulette' => ['label' => 'Roulette',                  'actions' => ['reassign'], 'prefixes' => ['roulette_']],
 ];
 
@@ -493,9 +493,18 @@ function log_category_filter(string $cat): string
 //           payment date + 3 months + 2 years (§6.4).
 const AFFILIATE_GRACE_DAYS = ['basic' => 7, 'standard' => 30];
 
+// Admins refer clients on a partner account with no term at all.
+const TIER_UNLIMITED = 'unlimited';
+
+function tier_unlimited(?array $p): bool
+{
+    return ($p['affiliate_tier'] ?? '') === TIER_UNLIMITED;
+}
+
 // none (no plan yet) | active | grace | terminated
 function affiliate_state(array $p): string
 {
+    if (tier_unlimited($p)) return 'active';          // never expires
     if (empty($p['affiliate_tier']) || empty($p['lifecycle_expires_at'])) return 'none';
     $exp = strtotime($p['lifecycle_expires_at']);
     if ($exp >= time()) return 'active';
@@ -505,6 +514,7 @@ function affiliate_state(array $p): string
 
 function affiliate_grace_ends(array $p): ?int
 {
+    if (tier_unlimited($p)) return null;
     if (empty($p['affiliate_tier']) || empty($p['lifecycle_expires_at'])) return null;
     return strtotime($p['lifecycle_expires_at']) + (AFFILIATE_GRACE_DAYS[$p['affiliate_tier']] ?? 7) * 86400;
 }
@@ -553,7 +563,7 @@ function affiliate_new_expiry(array $p, string $tier): string
 
 function tier_label(?string $tier): string
 {
-    return ['basic' => 'Basic', 'standard' => 'Standard'][$tier ?? ''] ?? 'No plan';
+    return ['basic' => 'Basic', 'standard' => 'Standard', TIER_UNLIMITED => 'Unlimited'][$tier ?? ''] ?? 'No plan';
 }
 
 // Puts a member's Growth Partner side on Basic or Standard, and sets its term.
@@ -722,8 +732,8 @@ function role_name(string $role): string
 // Turns "the database hasn't been migrated yet" errors into instructions.
 function db_error_message(?string $err): ?string
 {
-    if ($err && str_contains($err, 'profiles_role_check')) {
-        return 'The database is not up to date yet. Run the migrations in supabase/migrations (20261122 and 20261124) in the Supabase SQL Editor, then try again.';
+    if ($err && (str_contains($err, 'profiles_role_check') || str_contains($err, 'profiles_affiliate_tier_check'))) {
+        return 'The database is not up to date yet. Run the migrations in supabase/migrations (20261122, 20261124 and 20261125) in the Supabase SQL Editor, then try again.';
     }
     return $err;
 }
@@ -753,7 +763,7 @@ function create_team_account(string $token, array $in): ?string
         if (!empty($taken['body'])) return 'That email already belongs to an account.';
     }
 
-    $res = supabase_request('POST', '/rest/v1/profiles', [
+    $row = [
         'full_name'     => mb_substr($name, 0, 120),
         'username'      => $username,
         'email'         => $email ?: null,
@@ -761,13 +771,22 @@ function create_team_account(string $token, array $in): ?string
         'phone'         => mb_substr(trim((string) ($in['phone'] ?? '')), 0, 40) ?: null,
         'role'          => $role,
         'status'        => 'accepted',
-    ], $token, ['Prefer: return=representation']);
+    ];
+    // An admin also gets a Growth Partner account — same referral code and
+    // commission as anyone else, but with no term to renew.
+    if ($role === 'admin') $row += ['affiliate_tier' => TIER_UNLIMITED, 'lifecycle_expires_at' => null];
+
+    $res = supabase_request('POST', '/rest/v1/profiles', $row, $token, ['Prefer: return=representation']);
     if ($res['error'] || empty($res['body'][0])) return db_error_message($res['error']) ?: 'Could not create the account.';
 
     $new = $res['body'][0];
     audit_log($token, 'staff_created', 'profile', $new['id'],
-        role_name($role) . ' account for ' . $new['full_name'] . ' (@' . $username . ')');
-    notify($token, 'Welcome to KAM TEAM', 'Your ' . role_name($role) . ' account is ready.', $new['id'], 'all', dashboard_url($role));
+        role_name($role) . ' account for ' . $new['full_name'] . ' (@' . $username . ')'
+        . ($role === 'admin' ? ' — with an unlimited Growth Partner account' : ''));
+    notify($token, 'Welcome to KAM TEAM',
+        'Your ' . role_name($role) . ' account is ready.'
+        . ($role === 'admin' ? ' Your referral code is ' . ($new['referral_code'] ?? '—') . ' — it never expires.' : ''),
+        $new['id'], 'all', dashboard_url($role));
     return null;
 }
 
@@ -1112,6 +1131,7 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
         'wheel' => '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>',
         'tree' => '<circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v5M12 12l-7 5M12 12l7 5"/>',
         'user' => '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/>',
+        'trash' => '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/>',
         'brief' => '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
     ];
     $out = '';

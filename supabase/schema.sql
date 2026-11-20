@@ -732,3 +732,14 @@ update public.notifications set audience = 'client' where audience = 'affiliate'
 alter table public.notifications drop constraint if exists notifications_audience_check;
 alter table public.notifications add constraint notifications_audience_check
   check (audience in ('all', 'admin', 'staff', 'client'));
+
+-- =====================================================================
+-- 15) Admin Growth Partner accounts never expire
+--     (migrations/20261125_admin_unlimited_partner.sql)
+-- =====================================================================
+alter table public.profiles drop constraint if exists profiles_affiliate_tier_check;
+alter table public.profiles add constraint profiles_affiliate_tier_check
+  check (affiliate_tier is null or affiliate_tier in ('basic', 'standard', 'unlimited'));
+update public.profiles
+set affiliate_tier = 'unlimited', lifecycle_expires_at = null
+where role = 'admin' and affiliate_tier is distinct from 'unlimited';

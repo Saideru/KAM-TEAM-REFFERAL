@@ -8,8 +8,10 @@ require_once __DIR__ . '/lib/logo.php';
 // that gate (see require_role()).
 define('PLAN_GATE_EXEMPT', true);
 
-['token' => $token, 'profile' => $profile] = require_role('client');
-$userId = $profile['id'];
+['token' => $token, 'profile' => $profile] = require_role(['client', 'admin']);
+$userId    = $profile['id'];
+$isAdmin   = $profile['role'] === 'admin';
+$unlimited = tier_unlimited($profile);   // admins: a partner account with no term
 $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
@@ -35,7 +37,8 @@ foreach ((is_array($chRes['body']) && !$chRes['error']) ? $chRes['body'] : [] as
 // What each plan card offers right now (Manual §4, §6.4).
 //   Basic:    only as a first plan — Basic cannot be renewed.
 //   Standard: first plan, upgrade from Basic, or +2-year renewal.
-$offer = function (array $pk) use ($tier): ?string {
+$offer = function (array $pk) use ($tier, $unlimited): ?string {
+    if ($unlimited)                 return null;
     if ($pk['tier'] === 'basic')    return $tier === null ? 'Start free' : null;
     if ($tier === 'standard')       return 'Renew — adds 2 years';
     if ($tier === 'basic')          return 'Upgrade to Standard';
@@ -119,7 +122,7 @@ $gated      = !$tier && !$pending;
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Growth Partner // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121b">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
 </head>
 <body>
 <header class="topbar">
@@ -127,7 +130,7 @@ $gated      = !$tier && !$pending;
     <?= kam_lockup() ?>
     <div style="display:flex;align-items:center;gap:10px">
       <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label affiliate">Growth Partner<?= $tier ? ' · ' . e(tier_label($tier)) : '' ?></span>
+      <span class="role-label <?= $isAdmin ? 'admin' : 'affiliate' ?>"><?= $isAdmin ? 'Admin' : 'Growth Partner' ?><?= $tier ? ' · ' . e(tier_label($tier)) : '' ?></span>
       <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
     </div>
   </div>
@@ -138,7 +141,9 @@ $gated      = !$tier && !$pending;
     ['label' => 'Choose your plan', 'href' => '#plans',   'icon' => 'box'],
     ['label' => 'Verify ID',        'href' => '/kyc.php', 'icon' => 'id'],
 ] : [
-    ['label' => '← Client account', 'href' => '/dashboard-client.php', 'icon' => 'brief'],
+    $isAdmin
+        ? ['label' => '← Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']
+        : ['label' => '← Client account',  'href' => '/dashboard-client.php', 'icon' => 'brief'],
     ['label' => 'Partner plan',   'href' => '#plans',    'icon' => 'box'],
     ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
     ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
@@ -149,7 +154,7 @@ $gated      = !$tier && !$pending;
 <main class="wrap">
   <?php if (!$gated): ?>
   <nav class="account-switch" aria-label="Account">
-    <a href="/dashboard-client.php">Client account</a>
+    <a href="<?= $isAdmin ? '/dashboard-admin.php' : '/dashboard-client.php' ?>"><?= $isAdmin ? 'Admin dashboard' : 'Client account' ?></a>
     <a href="/dashboard-affiliate.php" class="on">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?></small></a>
   </nav>
   <?php endif; ?>
@@ -176,10 +181,14 @@ $gated      = !$tier && !$pending;
       To keep it, find a client — when a client you referred pays their deposit you get +3 months — or <a href="#plans">upgrade to Standard for US$100</a> (+2 years).</div>
   <?php endif; ?>
 
-  <?php if ($tier): ?>
+  <?php if ($unlimited): ?>
+    <div class="card countdown-card" id="overview"><span class="label">Unlimited Growth Partner account</span>
+      <p style="margin:8px 0 0;font-size:13px;color:var(--text-muted)">Your partner account never expires — there is no plan to buy and nothing to renew. You earn commission on every client you refer, like any Growth Partner.</p></div>
+  <?php elseif ($tier): ?>
     <div id="overview"><?= lifecycle_countdown($profile, tier_label($tier) . ' Growth Partner term // +3 months per Qualified Client') ?></div>
   <?php endif; ?>
 
+  <?php if (!$unlimited): ?>
   <section id="plans" style="margin-bottom:20px">
     <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>partner_plan.sh // <?= $tier ? 'Your plan: ' . e(tier_label($tier)) : 'Choose your Growth Partner plan' ?></span></div>
     <div class="terminal-body">
@@ -260,10 +269,11 @@ $gated      = !$tier && !$pending;
       <?php endif; ?>
     </div>
   </section>
+  <?php endif; ?>
 
   <?php if (!$gated): ?>
     <?= affiliate_account_html($token, $profile, !in_array($state, ['grace', 'terminated'], true)) ?>
-    <div style="margin-top:20px"><?= business_card($token, $profile, $csrf) ?></div>
+    <?php if (!$isAdmin): ?><div style="margin-top:20px"><?= business_card($token, $profile, $csrf) ?></div><?php endif; ?>
   <?php endif; ?>
 </main>
 </div>
