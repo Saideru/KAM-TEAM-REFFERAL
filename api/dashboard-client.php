@@ -3,16 +3,15 @@ require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
 
-// Client account — permanent. Buys service packages (50% advance deposit
-// before setup starts), follows work progress and reads delivered reports.
-// Its own affiliate side (referral code only, no term) is the second tab.
+// The Client side of a member account — permanent. Buys service packages
+// (50% advance deposit before setup starts), follows work progress and reads
+// delivered reports. The Growth Partner side lives on /dashboard-affiliate.php.
 ['token' => $token, 'profile' => $profile] = require_role('client');
+if (isset($_GET['view'])) { header('Location: /dashboard-affiliate.php'); exit; }
 $userId = $profile['id'];
 $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
-$view   = ($_GET['view'] ?? '') === 'affiliate' ? 'affiliate' : 'client';
-$here   = '/dashboard-client.php' . ($view === 'affiliate' ? '?view=affiliate' : '');
 
 $pkgRes   = supabase_request('GET', '/rest/v1/packages?select=*&kind=eq.service&active=eq.true&order=price.asc', null, $token);
 $packages = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : [];
@@ -83,7 +82,7 @@ $contact   = !empty($profile['assigned_admin'])
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><?= $view === 'affiliate' ? 'Growth Partnership' : 'Client' ?> // KAM Team</title>
+  <title>Client // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
   <link rel="stylesheet" href="/assets/styles.css?v=20261121a">
 </head>
@@ -100,36 +99,24 @@ $contact   = !empty($profile['assigned_admin'])
 </header>
 
 <div class="shell">
-<?= app_sidebar($view === 'affiliate' ? [
-    ['label' => '← Client account', 'href' => '/dashboard-client.php', 'icon' => 'brief'],
-    ['label' => 'Referral link',    'href' => '#share',    'icon' => 'link'],
-    ['label' => 'Earnings',         'href' => '#earnings', 'icon' => 'cash'],
-    ['label' => 'Your referrals',   'href' => '#network',  'icon' => 'tree'],
-] : [
+<?= app_sidebar([
     ['label' => 'Overview',           'href' => '#overview', 'icon' => 'home'],
     ['label' => 'Service packages',   'href' => '#packages', 'icon' => 'box'],
     ['label' => 'Work progress',      'href' => '#progress', 'icon' => 'check'],
     ['label' => 'Reports',            'href' => '#reports',  'icon' => 'log'],
     ['label' => 'Your business',      'href' => '#business', 'icon' => 'brief'],
-    ['label' => 'Growth Partnership →', 'href' => '/dashboard-client.php?view=affiliate', 'icon' => 'link'],
+    ['label' => 'Growth Partner →',   'href' => '/dashboard-affiliate.php', 'icon' => 'link'],
     ['label' => 'Verify ID',          'href' => '/kyc.php',  'icon' => 'id'],
-], $view === 'affiliate' ? 'Growth Partnership' : 'Client') ?>
+], 'Client') ?>
 <main class="wrap">
   <nav class="account-switch" aria-label="Account">
-    <a href="/dashboard-client.php" class="<?= $view === 'client' ? 'on' : '' ?>">Client account</a>
-    <a href="/dashboard-client.php?view=affiliate" class="<?= $view === 'affiliate' ? 'on' : '' ?>">Growth Partnership <small><?= e($profile['referral_code'] ?? '') ?></small></a>
+    <a href="/dashboard-client.php" class="on">Client account</a>
+    <a href="/dashboard-affiliate.php">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?><?= $profile['affiliate_tier'] ? ' · ' . e(tier_label($profile['affiliate_tier'])) : '' ?></small></a>
   </nav>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
-<?php if ($view === 'affiliate'): ?>
-  <span class="label"><span class="dot" style="background:var(--yellow)"></span>KAM Growth Partnership Program // linked to your client account</span>
-  <h1>Refer clients, <span class="accent" style="color:var(--yellow)">earn commission.</span></h1>
-  <p class="hint" style="margin:-6px 0 14px">Your client account includes your own referral code. It doesn't expire and has no plan to buy.</p>
-  <?= affiliate_account_html($token, $profile, true) ?>
-
-<?php else: ?>
   <span class="label"><span class="dot" style="background:var(--orange)"></span>Client // <?= e($profile['company'] ?: $profile['username']) ?></span>
   <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--rust)">Your KAM Team services.</span></h1>
 
@@ -212,7 +199,6 @@ $contact   = !empty($profile['assigned_admin'])
   </section>
 
   <?= business_card($token, $profile, $csrf) ?>
-<?php endif; ?>
 </main>
 </div>
 <?= sidebar_scrollspy_script() ?>

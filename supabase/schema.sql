@@ -718,3 +718,17 @@ alter table public.profiles add constraint profiles_role_check
 alter table public.notifications drop constraint if exists notifications_audience_check;
 alter table public.notifications add constraint notifications_audience_check
   check (audience in ('all', 'admin', 'staff', 'client', 'affiliate'));
+
+-- =====================================================================
+-- 14) One account = Client + Growth Partner
+--     (migrations/20261124_unified_member_accounts.sql)
+-- =====================================================================
+update public.profiles set role = 'client' where role = 'affiliate';
+alter table public.profiles alter column role set default 'client';
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('admin', 'staff', 'client'));
+update public.notifications set audience = 'client' where audience = 'affiliate';
+alter table public.notifications drop constraint if exists notifications_audience_check;
+alter table public.notifications add constraint notifications_audience_check
+  check (audience in ('all', 'admin', 'staff', 'client'));

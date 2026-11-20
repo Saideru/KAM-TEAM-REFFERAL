@@ -7,10 +7,10 @@ $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
 
-$roleOptions      = ['admin', 'staff', 'client', 'affiliate'];
+$roleOptions      = ['admin', 'staff', 'client'];
 $statusOptions    = ['pending', 'accepted', 'suspended', 'rejected'];
 $refStatusOptions = ['pending', 'active', 'completed', 'cancelled'];
-$audienceOptions  = ['all' => 'Everyone', 'affiliate' => 'Growth Partners', 'client' => 'Clients', 'staff' => 'Staff', 'admin' => 'Admins'];
+$audienceOptions  = ['all' => 'Everyone', 'client' => 'Members (Client + Growth Partner)', 'staff' => 'Staff', 'admin' => 'Admins'];
 $adminId          = $profile['id'];
 $back = fn(string $panel) => header('Location: /dashboard-admin.php#' . $panel);
 $svcStatusList    = ['active', 'paused', 'completed'];
@@ -25,8 +25,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $role = in_array($_POST['new_role'] ?? '', $roleOptions, true) ? $_POST['new_role'] : null;
         if ($uid && $role) {
             $patch = ['role' => $role];
-            // Client and admin accounts are permanent; only affiliates carry a term.
-            if ($role !== 'affiliate') $patch += ['lifecycle_expires_at' => null, 'affiliate_tier' => null];
+            // Only a member has a Growth Partner term; staff/admins never do.
+            if ($role !== 'client') $patch += ['lifecycle_expires_at' => null, 'affiliate_tier' => null];
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), $patch, $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'role_change', 'profile', $uid, 'Changed role to ' . $role);
@@ -457,7 +457,7 @@ $totalUsers    = count(array_filter($allProfiles, fn($p) => empty($p['deleted_at
 $adminCount    = count(array_filter($allProfiles, fn($p) => $p['role'] === 'admin' && empty($p['deleted_at'])));
 $staffCount    = count(array_filter($allProfiles, fn($p) => $p['role'] === 'staff' && empty($p['deleted_at'])));
 $clientCount   = count(array_filter($allProfiles, fn($p) => $p['role'] === 'client' && empty($p['deleted_at'])));
-$affCount      = count(array_filter($allProfiles, fn($p) => $p['role'] === 'affiliate' && empty($p['deleted_at'])));
+$gpCount       = count(array_filter($allProfiles, fn($p) => $p['role'] === 'client' && !empty($p['affiliate_tier']) && empty($p['deleted_at'])));
 
 $clients = array_filter($allProfiles, fn($p) => $p['role'] === 'client' && empty($p['deleted_at']));
 $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
@@ -506,7 +506,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
   <section class="grid">
-    <div class="card"><span class="label">01 // Users</span><div class="big cyan"><?= $totalUsers ?></div><span class="label" style="font-size:10px;display:block;margin-top:4px"><?= $adminCount ?> admin · <?= $staffCount ?> staff · <?= $clientCount ?> client · <?= $affCount ?> growth partner<?= $affCount === 1 ? '' : 's' ?></span></div>
+    <div class="card"><span class="label">01 // Users</span><div class="big cyan"><?= $totalUsers ?></div><span class="label" style="font-size:10px;display:block;margin-top:4px"><?= $adminCount ?> admin · <?= $staffCount ?> staff · <?= $clientCount ?> member<?= $clientCount === 1 ? '' : 's' ?> (<?= $gpCount ?> on a partner plan)</span></div>
     <div class="card"><span class="label">02 // Referrals</span><div class="big"><?= count($allRefs) ?></div></div>
     <div class="card"><span class="label">03 // Packages</span><div class="big"><?= count($allPkgs) ?></div></div>
     <div class="card"><span class="label">04 // Revenue</span><div class="big green">$<?= number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2) ?></div></div>
@@ -529,7 +529,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <div class="row"><div class="field"><label>Full name</label><input name="full_name" required value="<?= e($editUser['full_name']) ?>"></div><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($editUser['username']) ?>"></div></div>
         <div class="row"><div class="field"><label>Email</label><input name="email" type="email" value="<?= e($editUser['email'] ?? '') ?>"></div><div class="field"><label>Phone</label><input name="phone" value="<?= e($editUser['phone'] ?? '') ?>"></div></div>
         <div class="row"><div class="field"><label>Company</label><input name="company" value="<?= e($editUser['company'] ?? '') ?>"></div><div class="field"><label>Growth Partner term expires (UTC)</label><input name="lifecycle_expires_at" type="datetime-local" value="<?= $editUser['lifecycle_expires_at'] ? e(gmdate('Y-m-d\TH:i', strtotime($editUser['lifecycle_expires_at']))) : '' ?>"><div class="hint">Leave empty to keep it as it is. Client and admin accounts never expire.</div><label class="check" style="margin-top:6px"><input type="checkbox" name="lifecycle_clear" value="1"> Remove the expiry</label></div></div>
-        <?php if ($editUser['role'] === 'affiliate'): ?><div class="row"><div class="field"><label>Growth Partner plan</label><select name="affiliate_tier"><option value="">No plan yet</option><option value="basic" <?= ($editUser['affiliate_tier'] ?? '') === 'basic' ? 'selected' : '' ?>>Basic</option><option value="standard" <?= ($editUser['affiliate_tier'] ?? '') === 'standard' ? 'selected' : '' ?>>Standard</option></select></div><div class="field"></div></div><?php endif; ?>
+        <?php if ($editUser['role'] === 'client'): ?><div class="row"><div class="field"><label>Growth Partner plan</label><select name="affiliate_tier"><option value="">No plan yet</option><option value="basic" <?= ($editUser['affiliate_tier'] ?? '') === 'basic' ? 'selected' : '' ?>>Basic</option><option value="standard" <?= ($editUser['affiliate_tier'] ?? '') === 'standard' ? 'selected' : '' ?>>Standard</option></select></div><div class="field"></div></div><?php endif; ?>
         <div class="row"><div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" placeholder="Leave empty to keep current"></div><div class="field"><label>Role / status</label><div class="hint" style="margin-top:10px">Change these with the selectors in the table below.</div></div></div>
         <button class="btn btn-sm btn-solid" type="submit">Save user →</button>
       </form>
@@ -571,9 +571,9 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           <tr style="<?= $deleted ? 'opacity:.5' : '' ?>">
             <td><strong><?= e($p['full_name']) ?></strong><?= $deleted ? ' <span style="color:var(--red)">[DEL]</span>' : '' ?></td>
             <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
-            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'affiliate' ? '<br><span class="hint">' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
+            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'client' ? '<br><span class="hint">Growth Partner · ' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
             <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
-            <td style="font-size:12px"><?php if ($p['role'] !== 'affiliate'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>—<?php else: $st = affiliate_state($p); ?><?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
+            <td style="font-size:12px"><?php if ($p['role'] !== 'client'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>Client permanent<br><span class="hint">no partner plan</span><?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
             <td><?php if ($deleted): ?>
               <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form>
@@ -595,7 +595,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- APPROVALS -->
   <div id="panel-approvals" class="admin-panel">
     <div class="card" style="margin-bottom:12px"><h2>Account applications</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">New accounts wait behind the approval wall until you approve them. Approving opens their dashboard. Client accounts are permanent; an affiliate's term starts when their Basic/Standard plan is approved.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">New accounts wait behind the approval wall until you approve them. Approving opens their dashboard. Every account is a permanent Client plus a Growth Partner. After approval the member picks Basic or Standard; the Growth Partner term starts then.</p>
       <?php if (!$applications): ?><p class="empty">No applications waiting.</p>
       <?php else: ?><div class="table-scroll"><table>
         <thead><tr><th>Applicant</th><th>Applied as</th><th>Business &amp; struggles</th><th>Contact</th><th>Referred by</th><th>Applied</th><th>Decision</th></tr></thead>
@@ -888,7 +888,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- ROULETTE -->
   <div id="panel-roulette" class="admin-panel">
     <div class="card" style="margin-bottom:12px"><h2>Roulette rotation</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every account you approve — Growth Partner or Client — is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped. An account keeps its admin for good, so any package it buys later goes to the same person instead of taking a new turn.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every account you approve is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped. An account keeps its admin for good, so any package it buys later goes to the same person instead of taking a new turn.</p>
       <?php if (!$roulette['members']): ?><p class="empty">Nobody is in the rotation — approved accounts won't be assigned. Add an admin below.</p>
       <?php else: ?>
       <ol class="roulette">

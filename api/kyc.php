@@ -2,7 +2,11 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 
-['token' => $token, 'profile' => $profile] = require_role(['client', 'affiliate']);
+// Reachable before a plan is chosen: Standard can't be paid for without
+// approved identity documents.
+define('PLAN_GATE_EXEMPT', true);
+
+['token' => $token, 'profile' => $profile] = require_role('client');
 $userId = $profile['id'];
 $errors = [];
 $notice = flash();

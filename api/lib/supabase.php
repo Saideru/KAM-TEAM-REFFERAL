@@ -165,10 +165,10 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         }
     }
 
-    // Client = permanent account that buys service packages.
-    // Affiliate = refers clients; picks Basic/Standard after approval.
-    $role = in_array($meta['role'] ?? '', ['client', 'affiliate'], true)
-        ? $meta['role'] : 'affiliate';
+    // One account, both sides: a permanent Client that buys service
+    // packages, and a Growth Partner that refers clients. The Growth
+    // Partner plan (Basic/Standard) is chosen after an admin approves.
+    $role = 'client';
 
     // Every new account waits behind the approval wall until an admin accepts
     // it; the lifecycle clock starts at approval (see approve_application()).
@@ -298,16 +298,21 @@ function current_profile(?string $token = null): ?array
     return $cached ?: null;
 }
 
-// Client and admin accounts are permanent. Only an affiliate's term
-// expires; it can still sign in during the grace period to renew or
-// upgrade, and is terminated once the grace period has passed (§4.3, §6.1).
+// A member account never expires: the Client side is permanent. Only the
+// Growth Partner side carries a term (Basic/Standard), and when that lapses
+// the member simply stops earning until they choose a plan again.
 function check_account_status(?array $profile): bool
 {
     if (!$profile) return false;
     if ($profile['status'] !== 'accepted') return false;
     if (!empty($profile['deleted_at'])) return false;
-    if (($profile['role'] ?? '') === 'affiliate' && affiliate_state($profile) === 'terminated') return false;
     return true;
+}
+
+// A member: one account that is a permanent Client and a Growth Partner.
+function is_member(?array $profile): bool
+{
+    return ($profile['role'] ?? '') === 'client';
 }
 
 // Admins and staff are KAM TEAM's own people: registered by an admin, never
@@ -329,8 +334,8 @@ function dashboard_url(string $role): string
         'admin'     => '/dashboard-admin.php',
         'staff'     => '/work.php',
         'client'    => '/dashboard-client.php',
-        'affiliate' => '/dashboard-affiliate.php',
-    ][$role] ?? '/dashboard-affiliate.php';
+        'affiliate' => '/dashboard-client.php',   // legacy rows, pre-migration
+    ][$role] ?? '/dashboard-client.php';
 }
 
 function redirect_by_role(?string $welcome = null): void
@@ -342,7 +347,7 @@ function redirect_by_role(?string $welcome = null): void
         exit;
     }
 
-    header('Location: ' . dashboard_url($profile['role'] ?? 'affiliate') . ($welcome ? '?welcome=1' : ''));
+    header('Location: ' . dashboard_url($profile['role'] ?? 'client') . ($welcome ? '?welcome=1' : ''));
     exit;
 }
 
@@ -374,9 +379,7 @@ function require_role(string|array $allowed): array
     }
 
     if ($role !== 'admin' && !check_account_status($profile)) {
-        flash('error', $role === 'affiliate' && affiliate_state($profile) === 'terminated'
-            ? 'Your Growth Partner account expired and its grace period has ended. Contact support.'
-            : 'Your account is inactive. Contact support.');
+        flash('error', 'Your account is inactive. Contact support.');
         supabase_sign_out_local();
         header('Location: /index.php');
         exit;
@@ -388,9 +391,33 @@ function require_role(string|array $allowed): array
         exit;
     }
 
-    if ($role === 'affiliate') remind_basic_expiry($profile);
+    if (is_member($profile)) {
+        remind_basic_expiry($profile);
+
+        // Plan gate: an approved member picks Basic or Standard before the
+        // dashboard opens (Manual §1.3). The plan chooser itself, and the
+        // KYC page Standard needs, declare PLAN_GATE_EXEMPT.
+        if (!defined('PLAN_GATE_EXEMPT') && needs_plan($token, $profile)) {
+            header('Location: /dashboard-affiliate.php');
+            exit;
+        }
+    }
 
     return ['token' => $token, 'profile' => $profile];
+}
+
+// True until the member has either a Growth Partner plan or a plan request
+// waiting for an admin.
+function needs_plan(string $token, array $profile): bool
+{
+    if (!empty($profile['affiliate_tier'])) return false;
+    return !plan_request_pending($token, $profile['id']);
+}
+
+function plan_request_pending(string $token, string $userId): bool
+{
+    $res = supabase_request('GET', '/rest/v1/transactions?select=id&limit=1&type=eq.activation&status=eq.pending&user_id=eq.' . urlencode($userId), null, $token);
+    return is_array($res['body']) && !$res['error'] && $res['body'] !== [];
 }
 
 // =====================================================================
@@ -529,7 +556,7 @@ function tier_label(?string $tier): string
     return ['basic' => 'Basic', 'standard' => 'Standard'][$tier ?? ''] ?? 'No plan';
 }
 
-// Puts an affiliate on Basic or Standard and sets their term.
+// Puts a member's Growth Partner side on Basic or Standard, and sets its term.
 function activate_account(string $token, string $userId, string $tier): ?string
 {
     $p = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($userId), null, $token)['body'][0] ?? null;
@@ -631,10 +658,11 @@ function pay_referral_commission(string $token, array $txn): void
     if (!$refId) return;
     $referrer = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($refId), null, $token)['body'][0] ?? null;
     if (!$referrer || !empty($referrer['deleted_at'])) return;
-    if ($referrer['role'] === 'affiliate' && affiliate_state($referrer) === 'terminated') return;
+    // An expired Growth Partner term past its grace period earns nothing.
+    if (affiliate_state($referrer) === 'terminated') return;
 
-    // Qualified Client: +3 months on the affiliate's current term.
-    if ($referrer['role'] === 'affiliate' && !empty($referrer['lifecycle_expires_at'])) {
+    // Qualified Client: +3 months on the referrer's Growth Partner term.
+    if (!empty($referrer['lifecycle_expires_at'])) {
         $base = max(strtotime($referrer['lifecycle_expires_at']), time());
         supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($refId),
             ['lifecycle_expires_at' => date('c', strtotime('+3 months', $base))], $token, ['Prefer: return=minimal']);
@@ -660,7 +688,7 @@ function pay_referral_commission(string $token, array $txn): void
     notify($token, 'You earned $' . number_format($commission, 2),
         ($buyer['full_name'] ?? 'A client you referred') . ' paid the advance deposit on ' . ($txn['packages']['name'] ?? 'a package')
         . '. You earned ' . pct_label($pct) . '% of it'
-        . ($referrer['role'] === 'affiliate' ? ' and 3 more months on your Growth Partner term.' : '.'), $refId);
+        . (!empty($referrer['lifecycle_expires_at']) ? ' and 3 more months on your Growth Partner term.' : '.'), $refId);
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -687,14 +715,15 @@ function reject_activation(string $token, string $txnId, string $adminId, string
 
 function role_name(string $role): string
 {
-    return ['admin' => 'Admin', 'staff' => 'Staff', 'client' => 'Client', 'affiliate' => 'Growth Partner'][$role] ?? $role;
+    // One member account is both, so 'client' covers Client + Growth Partner.
+    return ['admin' => 'Admin', 'staff' => 'Staff', 'client' => 'Client', 'affiliate' => 'Client'][$role] ?? $role;
 }
 
 // Turns "the database hasn't been migrated yet" errors into instructions.
 function db_error_message(?string $err): ?string
 {
     if ($err && str_contains($err, 'profiles_role_check')) {
-        return 'The database does not allow Staff accounts yet. Run supabase/migrations/20261122_staff_role.sql in the Supabase SQL Editor, then try again.';
+        return 'The database is not up to date yet. Run the migrations in supabase/migrations (20261122 and 20261124) in the Supabase SQL Editor, then try again.';
     }
     return $err;
 }
@@ -749,8 +778,8 @@ function approve_application(string $token, string $userId): ?string
     if (!$p) return 'User not found.';
     if (!in_array($p['status'], ['pending', 'rejected'], true)) return 'This application was already reviewed.';
 
-    // Clients are permanent. An affiliate's term starts when their
-    // Basic/Standard plan request is approved, not here.
+    // The Client side is permanent. The Growth Partner term starts when the
+    // member's Basic/Standard plan is activated, not here.
     $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), [
         'status' => 'accepted', 'review_note' => null,
     ], $token, ['Prefer: return=minimal']);
@@ -972,7 +1001,9 @@ function downline_graph_html(string $token, array $profile): string
         $html = '<ul>';
         foreach ($t['kids'][$id] as $k) {
             $role = $k['role'];
-            $type = $role === 'affiliate' ? 'Growth Partner' . (!empty($k['affiliate_tier']) ? ' · ' . tier_label($k['affiliate_tier']) : '') : role_name($role);
+            $type = $role === 'client'
+                ? 'Client · ' . (!empty($k['affiliate_tier']) ? tier_label($k['affiliate_tier']) . ' partner' : 'no partner plan')
+                : role_name($role);
             $n    = $t['below'][$k['id']] ?? 0;
             $html .= '<li><div class="org-node ' . e($role) . ($k['status'] !== 'accepted' ? ' is-pending' : '') . '" title="Joined ' . e(date('M j, Y', strtotime($k['created_at']))) . '">'
                    . '<span class="org-lvl">L' . $k['level'] . '</span>'
@@ -1023,7 +1054,7 @@ function roulette_claim_account(string $token, string $userId): ?array
     $admin = supabase_request('GET', '/rest/v1/profiles?select=id,full_name&id=eq.' . urlencode($adminId), null, $token)['body'][0] ?? null;
     if ($isNew) {
         notify($token, 'Roulette: a new account is yours',
-            ($user['full_name'] ?? 'A new account') . ' (' . role_name($user['role'] ?? 'affiliate') . ') was added to your list'
+            ($user['full_name'] ?? 'A new account') . ' (' . role_name($user['role'] ?? 'client') . ') was added to your list'
             . (!empty($user['business_nature']) ? ' · ' . $user['business_nature'] : '')
             . (!empty($user['business_struggles']) ? '. Needs help with: ' . implode(', ', array_map('struggle_label', $user['business_struggles'])) : '') . '.',
             $adminId, 'all', '/dashboard-admin.php?mine=1#roulette');
@@ -1135,7 +1166,7 @@ function notify(string $token, string $title, ?string $body = null, ?string $use
 // Personal notifications plus broadcasts to everyone or to the user's role.
 function fetch_notifications(string $token, array $profile, int $limit = 20): array
 {
-    $role = $profile['role'] ?? 'affiliate';
+    $role = $profile['role'] ?? 'client';
     $or   = 'or=(user_id.eq.' . $profile['id'] . ',and(user_id.is.null,audience.in.(all,' . $role . ')))';
     $res  = supabase_request('GET', '/rest/v1/notifications?select=*&' . $or . '&order=created_at.desc&limit=' . $limit, null, $token);
     return is_array($res['body']) && !$res['error'] ? $res['body'] : [];

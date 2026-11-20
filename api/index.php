@@ -9,7 +9,7 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'role' => 'affiliate', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
 $notice = flash();
 
 if ($ref !== '' && !isset($_GET['mode'])) {
@@ -47,7 +47,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old['email']     = trim((string) ($_POST['email'] ?? ''));
         $old['phone']     = trim((string) ($_POST['phone'] ?? ''));
         $old['company']   = trim((string) ($_POST['company'] ?? ''));
-        $old['role']      = in_array($_POST['role'] ?? '', ['client', 'affiliate'], true) ? $_POST['role'] : 'affiliate';
         $confirm          = (string) ($_POST['password_confirm'] ?? '');
         $old['business_nature']    = in_array($_POST['business_nature'] ?? '', BUSINESS_NATURES, true) ? $_POST['business_nature'] : '';
         $old['business_struggles'] = array_values(array_intersect(array_keys(BUSINESS_STRUGGLES), (array) ($_POST['business_struggles'] ?? [])));
@@ -71,7 +70,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'phone'     => $old['phone'],
                 'company'   => $old['company'],
                 'ref'       => $ref,
-                'role'      => $old['role'],
                 'business_nature'    => $old['business_nature'],
                 'business_struggles' => $old['business_struggles'],
                 'business_notes'     => $old['business_notes'] ?: null,
@@ -109,10 +107,10 @@ $csrf = csrf_token();
     <div>
       <span class="label"><span class="dot"></span>KAM GROWTH PARTNERSHIP PROGRAM</span>
       <h1>Solve business problems with the power of <span class="accent">people + AI.</span></h1>
-      <p class="lead">Join the KAM Growth Partnership Program as a Growth Partner. Refer clients, track your referrals and manage commissions in one place.</p>
+      <p class="lead">Join the KAM Growth Partnership Program. Buy KAM Team services as a Client, refer clients as a Growth Partner, and manage both from one dashboard.</p>
 
       <ol class="steps">
-        <li><span class="label" style="color:var(--orange)">01 //</span><span>Register and choose your tier — <strong style="color:var(--white)">Basic</strong> or <strong style="color:var(--orange)">Standard</strong>.</span></li>
+        <li><span class="label" style="color:var(--orange)">01 //</span><span>Register once — you get a <strong style="color:var(--white)">Client</strong> account and a <strong style="color:var(--orange)">Growth Partner</strong> account.</span></li>
         <li><span class="label" style="color:var(--orange)">02 //</span><span>Refer clients. You earn 10% of each client's 50% advance deposit.</span></li>
         <li><span class="label" style="color:var(--orange)">03 //</span><span>Track commissions, lifecycle and payouts from your dashboard.</span></li>
       </ol>
@@ -167,7 +165,7 @@ $csrf = csrf_token();
       <div id="panel-register" role="tabpanel" <?= $mode === 'register' ? '' : 'hidden' ?>>
         <span class="label kicker">02 // Registration</span>
         <h2>Join KAM Team.</h2>
-        <p class="sub">Choose your account type to get started.</p>
+        <p class="sub">One account, both sides: a permanent <strong>Client</strong> account for KAM Team services, and a <strong>Growth Partner</strong> account for referring clients. You pick your Growth Partner plan once an admin approves you.</p>
 
         <?php if ($ref !== ''): ?>
           <div class="ref-badge"><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
@@ -176,26 +174,6 @@ $csrf = csrf_token();
         <form method="post" action="/index.php" novalidate>
           <input type="hidden" name="action" value="register">
           <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
-
-          <div class="field">
-            <label>Account tier</label>
-            <div class="role-pick" role="radiogroup">
-              <label class="role-option <?= $old['role'] === 'affiliate' ? 'active' : '' ?>">
-                <input type="radio" name="role" value="affiliate" <?= $old['role'] === 'affiliate' ? 'checked' : '' ?>>
-                <span class="role-icon">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                </span>
-                <span class="role-info"><strong>Growth Partner</strong><small>Refer clients — choose Basic or Standard after sign-up</small></span>
-              </label>
-              <label class="role-option <?= $old['role'] === 'client' ? 'active' : '' ?>">
-                <input type="radio" name="role" value="client" <?= $old['role'] === 'client' ? 'checked' : '' ?>>
-                <span class="role-icon">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-                </span>
-                <span class="role-info"><strong>Client</strong><small>Buy KAM Team services — includes your own referral code</small></span>
-              </label>
-            </div>
-          </div>
 
           <div class="field"><label for="reg-name">Full name</label><input id="reg-name" name="full_name" type="text" autocomplete="name" required value="<?= e($old['full_name']) ?>" placeholder="John Doe"></div>
           <div class="field"><label for="reg-username">Username</label><input id="reg-username" name="username" type="text" autocomplete="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($mode === 'register' ? $old['username'] : '') ?>" placeholder="3-20 letters, numbers or _"></div>
@@ -267,12 +245,6 @@ $csrf = csrf_token();
         var visible = input.type === 'text';
         input.type = visible ? 'password' : 'text';
         btn.textContent = visible ? 'Show' : 'Hide';
-      });
-    });
-    document.querySelectorAll('.role-option input[type=radio]').forEach(function (radio) {
-      radio.addEventListener('change', function () {
-        document.querySelectorAll('.role-option').forEach(function (opt) { opt.classList.remove('active'); });
-        if (radio.checked) radio.closest('.role-option').classList.add('active');
       });
     });
   })();

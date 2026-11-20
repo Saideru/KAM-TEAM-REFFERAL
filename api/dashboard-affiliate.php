@@ -2,15 +2,21 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 
-['token' => $token, 'profile' => $profile] = require_role('affiliate');
+// The Growth Partner side of a member account: plan, term, referral code,
+// downline and earnings. It is also the plan chooser every approved member
+// passes through before their Client dashboard opens, so it is exempt from
+// that gate (see require_role()).
+define('PLAN_GATE_EXEMPT', true);
+
+['token' => $token, 'profile' => $profile] = require_role('client');
 $userId = $profile['id'];
 $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
-$state  = affiliate_state($profile);          // none | active | grace
+$state  = affiliate_state($profile);          // none | active | grace | terminated
 $tier   = $profile['affiliate_tier'] ?? null;
 
-// Affiliate plans only — service packages are bought by clients.
+// Growth Partner plans only — service packages are bought on the Client side.
 $pkgRes   = supabase_request('GET', '/rest/v1/packages?select=*&kind=eq.affiliate&active=eq.true&order=price.asc', null, $token);
 $packages = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : [];
 
@@ -48,17 +54,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         } elseif ($pending) {
             $errors[] = 'You already have a request waiting for admin approval.';
         } elseif ($pkg['tier'] === 'basic') {
-            $res = supabase_request('POST', '/rest/v1/transactions', [
-                'user_id' => $userId, 'package_id' => $pkg['id'], 'amount' => 0, 'type' => 'activation',
-                'status' => 'pending', 'notes' => 'Free Basic Growth Partner plan request',
-            ], $token, ['Prefer: return=minimal']);
-            if (!$res['error']) {
-                audit_log($token, 'plan_requested', 'profile', $userId, 'Requested Basic — ' . $pkg['name']);
-                notify($token, 'Basic plan request', $profile['full_name'] . ' asked for ' . $pkg['name'] . ' (free).', null, 'admin', '/dashboard-admin.php#approvals');
-                flash('success', 'Request sent. An admin will approve your Basic plan shortly.');
-                header('Location: /dashboard-affiliate.php'); exit;
+            // Basic is free, so it starts at once — the admin already
+            // approved the account itself (Manual §1.3, §4.1).
+            $err = activate_account($token, $userId, 'basic');
+            if (!$err) {
+                supabase_request('POST', '/rest/v1/transactions', [
+                    'user_id' => $userId, 'package_id' => $pkg['id'], 'amount' => 0, 'type' => 'activation',
+                    'status' => 'completed', 'reviewed_at' => date('c'), 'notes' => 'Free Basic Growth Partner plan',
+                ], $token, ['Prefer: return=minimal']);
+                audit_log($token, 'plan_activated', 'profile', $userId, 'Basic plan started — ' . $pkg['name']);
+                notify($token, 'Basic Growth Partner plan active', 'Your 3-month Basic term has started. Refer a client to add 3 more months, or upgrade to Standard any time.', $userId);
+                flash('success', 'Basic plan active — your 3-month term starts today.');
+                header('Location: /dashboard-client.php?welcome=1'); exit;
             }
-            $errors[] = $res['status'] === 409 ? 'You already have a request waiting for admin approval.' : 'Could not send your request. Please try again.';
+            $errors[] = db_error_message($err) ?: 'Could not start your Basic plan. Please try again.';
         } else {
             $refNo = trim((string) ($_POST['payment_ref'] ?? ''));
             if (!$payReady) {
@@ -76,8 +85,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 if (!$res['error']) {
                     audit_log($token, 'payment_submitted', 'profile', $userId, $offer($pkg) . ': ' . $pkg['name'] . ' $' . number_format((float) $pkg['price'], 2) . ' ref ' . $refNo);
                     notify($token, 'Payment to verify', $profile['full_name'] . ' paid $' . number_format((float) $pkg['price'], 2) . ' (' . $offer($pkg) . ') — ref ' . $refNo . '.', null, 'admin', '/dashboard-admin.php#approvals');
-                    flash('success', 'Payment submitted. An admin will verify it and update your plan.');
-                    header('Location: /dashboard-affiliate.php'); exit;
+                    flash('success', 'Payment submitted. An admin will verify it and start your Standard term.');
+                    // First plan: the dashboard opens now, the term starts on approval.
+                    header('Location: ' . ($tier ? '/dashboard-affiliate.php' : '/dashboard-client.php')); exit;
                 }
                 $errors[] = $res['status'] === 409 ? 'You already have a payment waiting for admin approval.' : 'Could not submit your payment. Please try again.';
             }
@@ -99,6 +109,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 $firstName  = explode(' ', $profile['full_name'])[0];
 $graceEnds  = affiliate_grace_ends($profile);
 $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null));
+// No plan and nothing pending: this is the gate, so the rest of the
+// account stays closed until a plan is chosen.
+$gated      = !$tier && !$pending;
 ?>
 <!doctype html>
 <html lang="en">
@@ -121,17 +134,30 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
 </header>
 
 <div class="shell">
-<?= app_sidebar([
-    ['label' => 'Partner plan', 'href' => '#plans',    'icon' => 'box'],
+<?= app_sidebar($gated ? [
+    ['label' => 'Choose your plan', 'href' => '#plans',   'icon' => 'box'],
+    ['label' => 'Verify ID',        'href' => '/kyc.php', 'icon' => 'id'],
+] : [
+    ['label' => '← Client account', 'href' => '/dashboard-client.php', 'icon' => 'brief'],
+    ['label' => 'Partner plan',   'href' => '#plans',    'icon' => 'box'],
     ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
     ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
-    ['label' => 'Your referrals', 'href' => '#network',  'icon' => 'tree'],
+    ['label' => 'Your downline',  'href' => '#network',  'icon' => 'tree'],
     ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
     ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
 ], 'Growth Partner') ?>
 <main class="wrap">
+  <?php if (!$gated): ?>
+  <nav class="account-switch" aria-label="Account">
+    <a href="/dashboard-client.php">Client account</a>
+    <a href="/dashboard-affiliate.php" class="on">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?></small></a>
+  </nav>
+  <?php endif; ?>
   <span class="label"><span class="dot" style="background:var(--yellow)"></span>KAM Growth Partnership Program // <?= e($profile['referral_code'] ?? '') ?></span>
-  <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--yellow)"><?= $tier ? 'Refer clients, earn commission.' : 'Choose your plan.' ?></span></h1>
+  <h1><?= $gated || isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--yellow)"><?= $tier ? 'Refer clients, earn commission.' : 'Choose your plan.' ?></span></h1>
+  <?php if ($gated): ?>
+    <div class="alert alert-warn" style="margin-bottom:12px"><strong>One last step.</strong> Your account is approved. Pick your Growth Partner plan below — <strong>Basic</strong> starts free right away, <strong>Standard</strong> costs US$100 — and your dashboard opens. Your Client account is permanent either way; only the Growth Partner side carries a term.</div>
+  <?php endif; ?>
 
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?= kyc_banner($profile) ?>
@@ -141,7 +167,10 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
     <div class="alert alert-error"><strong>Your <?= e(tier_label($tier)) ?> term expired on <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>.</strong>
       You have until <strong><?= date('M j, Y', $graceEnds) ?></strong> to save it —
       <?= $tier === 'basic' ? 'refer 1 Qualified Client (+3 months) or upgrade to Standard for US$100.' : 'renew for US$100.' ?>
-      After that the account is terminated, Pending commissions are forfeited and your Level 1 Growth Partners roll up to your upline.</div>
+      After that the Growth Partner side ends, Pending commissions are forfeited and your Co-growth Partners roll up to your upline. Your Client account stays open.</div>
+  <?php elseif ($state === 'terminated'): ?>
+    <div class="alert alert-error"><strong>Your <?= e(tier_label($tier)) ?> Growth Partner term has ended.</strong>
+      New referrals are not credited until you take Standard for US$100 (+3 months + 2 years). Your Client account is unaffected.</div>
   <?php elseif ($state === 'active' && $tier === 'basic' && ($daysLeft = (int) ceil((strtotime($profile['lifecycle_expires_at']) - time()) / 86400)) <= EXPIRY_NOTICE_DAYS): ?>
     <div class="alert alert-warn"><strong>Only <?= $daysLeft ?> day<?= $daysLeft === 1 ? '' : 's' ?> left on your Basic account</strong> (ends <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>).
       To keep it, find a client — when a client you referred pays their deposit you get +3 months — or <a href="#plans">upgrade to Standard for US$100</a> (+2 years).</div>
@@ -169,7 +198,7 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
         </div>
       <?php else: ?>
         <div class="output" style="margin-bottom:16px">
-          <?php if (!$tier): ?>Basic is free for 3 months. Standard is US$100 per 2-year term (+3-month activation bonus) with unlimited renewal. An admin approves every plan.
+          <?php if (!$tier): ?>Basic is free and starts immediately — a 3-month term. Standard is US$100 per 2-year term (+3-month activation bonus) with unlimited renewal; an admin verifies the payment before it starts.
           <?php elseif ($tier === 'basic'): ?>Basic cannot be renewed. Extend it by referring Qualified Clients (+3 months each), or upgrade to Standard: new expiry = payment date + 3 months + 2 years.
           <?php else: ?>Each US$100 payment adds 2 years to your current expiry. Payments stack.<?php endif; ?>
         </div>
@@ -201,7 +230,7 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
 
             <?php if (!$std): ?>
               <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="action" value="choose_package"><input type="hidden" name="package_id" value="<?= e($pk['id']) ?>">
-                <button class="btn" type="submit" style="border-color:var(--green);color:var(--green)">Request free plan →</button>
+                <button class="btn" type="submit" style="border-color:var(--green);color:var(--green)">Start Basic free — activate now →</button>
               </form>
             <?php else: ?>
               <details class="paywall">
@@ -232,9 +261,10 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
     </div>
   </section>
 
-  <?= affiliate_account_html($token, $profile, $state !== 'grace') ?>
-
-  <div style="margin-top:20px"><?= business_card($token, $profile, $csrf) ?></div>
+  <?php if (!$gated): ?>
+    <?= affiliate_account_html($token, $profile, !in_array($state, ['grace', 'terminated'], true)) ?>
+    <div style="margin-top:20px"><?= business_card($token, $profile, $csrf) ?></div>
+  <?php endif; ?>
 </main>
 </div>
 <?= lifecycle_countdown_script() ?>
