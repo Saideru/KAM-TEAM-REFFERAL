@@ -21,7 +21,7 @@ if (($_GET['doc'] ?? '') === 'components') {
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KAM-TEAM_Program-Components_v<?= e(PROGRAM_DOC_VERSION) ?></title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
 </head>
 <body class="report-page">
 <main class="wrap report-doc program-doc">
@@ -66,7 +66,7 @@ if (!$isAdmin) audit_log($token, 'report_viewed', 'client_report', $rep['id'], $
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title><?= e(report_filename($rep, $cName, $pName)) ?></title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
 </head>
 <body class="report-page">
 <main class="wrap report-doc">

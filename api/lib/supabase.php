@@ -391,6 +391,8 @@ function require_role(string|array $allowed): array
         exit;
     }
 
+    if ($role === 'admin') ensure_admin_partner($token, $profile);
+
     if (is_member($profile)) {
         remind_basic_expiry($profile);
 
@@ -443,12 +445,12 @@ function audit_log(string $token, string $action, ?string $entityType = null, ?s
 // falls under "other". New actions only need a matching prefix or name.
 const LOG_CATEGORIES = [
     'auth'     => ['label' => 'Login & terms',             'actions' => ['login_success', 'login_failed', 'logout', 'terms_accepted'], 'prefixes' => []],
-    'tasks'    => ['label' => 'Client task log',           'actions' => ['restore_task'], 'prefixes' => ['task_']],
+    'tasks'    => ['label' => 'Client task log',           'actions' => ['restore_task', 'purge_task'], 'prefixes' => ['task_']],
     'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
-    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
-    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'restore_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
+    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'purge_account', 'partner_account_opened', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
+    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'restore_transaction', 'purge_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
     'kyc'      => ['label' => 'KYC',                       'actions' => [], 'prefixes' => ['kyc_']],
-    'packages' => ['label' => 'Packages',                  'actions' => ['create_package', 'restore_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
+    'packages' => ['label' => 'Packages',                  'actions' => ['create_package', 'restore_package', 'purge_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
     'roulette' => ['label' => 'Roulette',                  'actions' => ['reassign'], 'prefixes' => ['roulette_']],
 ];
 
@@ -499,6 +501,41 @@ const TIER_UNLIMITED = 'unlimited';
 function tier_unlimited(?array $p): bool
 {
     return ($p['affiliate_tier'] ?? '') === TIER_UNLIMITED;
+}
+
+// Unlimited belongs to admins alone. Everyone else gets Basic/Standard or
+// nothing, so a demoted admin has to choose a real plan like any member.
+function partner_tier_for_role(string $role, ?string $current): ?string
+{
+    if ($role === 'admin') return TIER_UNLIMITED;
+    if ($role === 'staff') return null;
+    return $current === TIER_UNLIMITED ? null : $current;   // client keeps a real plan
+}
+
+// Set once the database refused 'unlimited', i.e. migration 20261125 has
+// not been run yet. The admin dashboard turns this into a visible notice.
+function partner_tier_blocked(?bool $set = null): bool
+{
+    static $blocked = false;
+    if ($set !== null) $blocked = $set;
+    return $blocked;
+}
+
+// Every admin has a Growth Partner account that never expires. Admins that
+// pre-date this rule are fixed up the next time they load a page, so no one
+// has to remember to run the backfill by hand.
+function ensure_admin_partner(string $token, array &$profile): void
+{
+    if (($profile['role'] ?? '') !== 'admin' || tier_unlimited($profile)) return;
+
+    $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($profile['id']),
+        ['affiliate_tier' => TIER_UNLIMITED, 'lifecycle_expires_at' => null], $token, ['Prefer: return=minimal']);
+    if ($res['error']) { partner_tier_blocked(true); return; }
+
+    $profile['affiliate_tier']       = TIER_UNLIMITED;
+    $profile['lifecycle_expires_at'] = null;
+    audit_log($token, 'partner_account_opened', 'profile', $profile['id'],
+        'Unlimited Growth Partner account opened for admin ' . ($profile['username'] ?? ''));
 }
 
 // none (no plan yet) | active | grace | terminated
@@ -777,6 +814,13 @@ function create_team_account(string $token, array $in): ?string
     if ($role === 'admin') $row += ['affiliate_tier' => TIER_UNLIMITED, 'lifecycle_expires_at' => null];
 
     $res = supabase_request('POST', '/rest/v1/profiles', $row, $token, ['Prefer: return=representation']);
+    // Older database without the 'unlimited' tier: still create the admin,
+    // and ensure_admin_partner() opens the partner side once it is migrated.
+    if ($role === 'admin' && $res['error'] && str_contains((string) $res['error'], 'affiliate_tier')) {
+        partner_tier_blocked(true);
+        unset($row['affiliate_tier'], $row['lifecycle_expires_at']);
+        $res = supabase_request('POST', '/rest/v1/profiles', $row, $token, ['Prefer: return=representation']);
+    }
     if ($res['error'] || empty($res['body'][0])) return db_error_message($res['error']) ?: 'Could not create the account.';
 
     $new = $res['body'][0];

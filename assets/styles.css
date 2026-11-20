@@ -290,6 +290,19 @@ td { padding: 10px 8px 10px 0; border-bottom: 1px solid var(--border); vertical-
 .role-badge.affiliate { background: var(--yellow-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 .role-badge.staff, .topbar .role-label.staff { background: var(--green-dim); color: var(--green); border: 1px solid var(--border-light); }
 
+/* ---------- Recycle bin actions ---------- */
+.bin-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; }
+.bin-purge > summary { list-style: none; cursor: pointer; }
+.bin-purge > summary::-webkit-details-marker { display: none; }
+.bin-purge[open] > summary { margin-bottom: 8px; }
+.bin-purge > form {
+  min-width: 250px; max-width: 320px; padding: 10px 12px;
+  border: 1px solid var(--red, #b3261e); border-radius: var(--radius); background: var(--surface-2);
+}
+.bin-purge p { margin: 0 0 8px; font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+.bin-purge label { display: block; margin-bottom: 4px; font-size: 11px; color: var(--text-dim); }
+.bin-purge input { width: 100%; margin-bottom: 8px; }
+
 /* ---------- Register staff (admin › users) ---------- */
 .staff-card { margin-bottom: 12px; }
 .staff-card > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
@@ -638,7 +651,32 @@ section[id], div[id="overview"] { scroll-margin-top: 16px; }
 .log-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
 .log-cats a { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border-light); border-radius: 999px; color: var(--text-muted); text-decoration: none; }
 .log-cats a.on { border-color: var(--rust); background: var(--orange-dim); color: var(--rust); }
-.log-row { padding: 4px 0; border-bottom: 1px solid var(--border); }
+/* Audit log: a borderless table — columns line up, no grid to read around. */
+.log-wrap { max-height: 600px; overflow: auto; padding: 0; }
+.log-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.log-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 8px 14px 8px 0; border: 0; border-bottom: 1px solid var(--border-light);
+  background: var(--surface); text-align: left; white-space: nowrap;
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim);
+}
+.log-table th:first-child, .log-table td:first-child { padding-left: 14px; }
+.log-table th:last-child,  .log-table td:last-child  { padding-right: 14px; }
+.log-table td { padding: 7px 14px 7px 0; border: 0; vertical-align: top; line-height: 1.45; }
+.log-table tbody tr.alt { background: rgba(0, 0, 0, .025); }
+.log-table tbody tr:hover { background: var(--orange-dim); }
+.log-table tr.log-day td {
+  padding: 14px 14px 4px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--rust); background: none;
+}
+.log-table tr.log-day:hover { background: none; }
+.log-time   { font-family: var(--font); color: var(--text-dim); white-space: nowrap; }
+.log-action { font-family: var(--font); font-size: 11px; color: var(--rust); white-space: nowrap; }
+.log-what   { min-width: 260px; }
+.log-what a { font-size: 11px; white-space: nowrap; }
+.log-by     { white-space: nowrap; color: var(--text-muted); }
+.log-ip     { font-family: var(--font); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+@media (max-width: 900px) { .log-table .log-ip, .log-table th:last-child { display: none; } }
 .log-cat { display: inline-block; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 0 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border-light); color: var(--text-muted); }
 .log-cat-auth { color: var(--rust); }
 .log-cat-tasks, .log-cat-reports { background: var(--orange-dim); color: var(--rust); }

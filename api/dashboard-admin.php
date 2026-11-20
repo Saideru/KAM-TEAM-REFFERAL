@@ -8,6 +8,8 @@ $notice = flash();
 $csrf   = csrf_token();
 
 $roleOptions      = ['admin', 'staff', 'client'];
+// What an existing admin account may be changed to: Staff, or stay Admin.
+const ADMIN_ROLE_TARGETS = ['admin', 'staff'];
 $statusOptions    = ['pending', 'accepted', 'suspended', 'rejected'];
 $refStatusOptions = ['pending', 'active', 'completed', 'cancelled'];
 $audienceOptions  = ['all' => 'Everyone', 'client' => 'Members (Client + Growth Partner)', 'staff' => 'Staff', 'admin' => 'Admins'];
@@ -23,10 +25,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     if ($act === 'change_role') {
         $uid  = $_POST['user_id'] ?? '';
         $role = in_array($_POST['new_role'] ?? '', $roleOptions, true) ? $_POST['new_role'] : null;
-        if ($uid && $role) {
-            $patch = ['role' => $role];
-            // Only a member has a Growth Partner term; staff/admins never do.
-            if ($role !== 'client') $patch += ['lifecycle_expires_at' => null, 'affiliate_tier' => null];
+        $cur = $uid ? (supabase_request('GET', '/rest/v1/profiles?select=role,affiliate_tier&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null) : null;
+
+        // An admin account can only step down to Staff. Going straight to a
+        // member account would hand it a referral side and a plan, so that
+        // has to be a deliberate second step from Staff.
+        if ($cur && $cur['role'] === 'admin' && !in_array($role, ADMIN_ROLE_TARGETS, true)) {
+            $errors[] = 'An admin account can only be changed to Staff. Move it to Staff first if it should become a member.';
+        } elseif ($cur && $uid === $adminId && $role !== 'admin') {
+            $errors[] = 'You cannot change your own role — ask another admin to do it.';
+        } elseif ($uid && $role) {
+            $patch = ['role' => $role, 'affiliate_tier' => partner_tier_for_role($role, $cur['affiliate_tier'] ?? null)];
+            // Only a member's partner side runs on a clock. An admin's never
+            // expires; staff have no partner account at all.
+            if ($role !== 'client' || $patch['affiliate_tier'] === null) $patch['lifecycle_expires_at'] = null;
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), $patch, $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'role_change', 'profile', $uid, 'Changed role to ' . $role);
@@ -74,6 +86,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 audit_log($token, 'soft_delete', 'profile', $uid, 'User soft-deleted');
                 flash('success', 'User trashed.'); header('Location: /dashboard-admin.php#users'); exit;
             }
+            $errors[] = $res['error'];
+        }
+    }
+
+    // ---- Recycle bin: erase for good. Each one is checked to be in the
+    // bin first, and is written to the audit log before it disappears. ----
+    if ($act === 'purge_user') {
+        $uid  = (string) ($_POST['user_id'] ?? '');
+        $typed = trim((string) ($_POST['confirm_username'] ?? ''));
+        $u    = $uid ? (supabase_request('GET', '/rest/v1/profiles?select=id,username,full_name,role,deleted_at&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null) : null;
+        if (!$u || empty($u['deleted_at'])) {
+            $errors[] = 'That account is not in the recycle bin.';
+        } elseif ($uid === $adminId) {
+            $errors[] = 'You cannot delete your own account.';
+        } elseif (strcasecmp($typed, (string) $u['username']) !== 0) {
+            $errors[] = 'Type the username exactly (' . $u['username'] . ') to delete that account for good.';
+        } else {
+            audit_log($token, 'purge_account', 'profile', $uid,
+                'Permanently deleted ' . $u['full_name'] . ' (@' . $u['username'] . ', ' . role_name($u['role']) . ') and everything attached to it');
+            $res = supabase_request('DELETE', '/rest/v1/profiles?id=eq.' . urlencode($uid), null, $token, ['Prefer: return=minimal']);
+            if (!$res['error']) { flash('success', '@' . $u['username'] . ' is permanently deleted.'); $back('trash'); exit; }
+            $errors[] = $res['error'];
+        }
+    }
+
+    if ($act === 'purge_txn') {
+        $tid = (string) ($_POST['txn_id'] ?? '');
+        $t   = $tid ? (supabase_request('GET', '/rest/v1/transactions?select=id,amount,type,status,payment_ref&id=eq.' . urlencode($tid), null, $token)['body'][0] ?? null) : null;
+        if (!$t || !in_array($t['status'], ['failed', 'reversed'], true)) {
+            $errors[] = 'That payment is not in the recycle bin.';
+        } else {
+            audit_log($token, 'purge_transaction', 'transaction', $tid, 'Permanently deleted a ' . $t['type'] . ' of $' . number_format((float) $t['amount'], 2) . ' (ref ' . ($t['payment_ref'] ?? '—') . ')');
+            $res = supabase_request('DELETE', '/rest/v1/transactions?id=eq.' . urlencode($tid) . '&status=in.(failed,reversed)', null, $token, ['Prefer: return=minimal']);
+            if (!$res['error']) { flash('success', 'Payment permanently deleted.'); $back('trash'); exit; }
+            $errors[] = $res['error'];
+        }
+    }
+
+    if ($act === 'purge_task') {
+        $tid = (string) ($_POST['task_id'] ?? '');
+        $t   = $tid ? (supabase_request('GET', '/rest/v1/client_tasks?select=id,task_code,title,status&id=eq.' . urlencode($tid), null, $token)['body'][0] ?? null) : null;
+        if (!$t || $t['status'] !== 'cancelled') {
+            $errors[] = 'That task is not in the recycle bin.';
+        } else {
+            audit_log($token, 'purge_task', 'client_task', $tid, 'Permanently deleted ' . $t['task_code'] . ' — ' . $t['title'] . ' and its task log');
+            $res = supabase_request('DELETE', '/rest/v1/client_tasks?id=eq.' . urlencode($tid) . '&status=eq.cancelled', null, $token, ['Prefer: return=minimal']);
+            if (!$res['error']) { flash('success', $t['task_code'] . ' permanently deleted.'); $back('trash'); exit; }
+            $errors[] = $res['error'];
+        }
+    }
+
+    if ($act === 'purge_package') {
+        $pid = (string) ($_POST['pkg_id'] ?? '');
+        $pk  = $pid ? (supabase_request('GET', '/rest/v1/packages?select=id,name,active&id=eq.' . urlencode($pid), null, $token)['body'][0] ?? null) : null;
+        if (!$pk || !empty($pk['active'])) {
+            $errors[] = 'That package is still on sale.';
+        } else {
+            // Past payments keep the package name in their notes, so the
+            // history still says what was bought once the row is gone.
+            $used = supabase_request('GET', '/rest/v1/transactions?select=id,notes&package_id=eq.' . urlencode($pid), null, $token)['body'] ?? [];
+            foreach (is_array($used) ? $used : [] as $t) {
+                if (str_contains((string) $t['notes'], '[Package: ')) continue;
+                supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($t['id']),
+                    ['notes' => trim(($t['notes'] ?? '') . ' [Package: ' . $pk['name'] . ']')], $token, ['Prefer: return=minimal']);
+            }
+            audit_log($token, 'purge_package', 'package', $pid, 'Permanently deleted the package "' . $pk['name'] . '" (' . count($used) . ' past payment(s) keep its name in their notes)');
+            $res = supabase_request('DELETE', '/rest/v1/packages?id=eq.' . urlencode($pid), null, $token, ['Prefer: return=minimal']);
+            if (!$res['error']) { flash('success', '"' . $pk['name'] . '" permanently deleted.'); $back('trash'); exit; }
             $errors[] = $res['error'];
         }
     }
@@ -513,7 +593,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>A</text></svg>">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121c">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
 </head>
 <body>
 <header class="topbar">
@@ -561,6 +641,9 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
   <?php if ($approvalCount): ?>
     <div class="alert alert-warn"><strong><?= count($applications) ?> account application<?= count($applications) === 1 ? '' : 's' ?> and <?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> (Growth Partner plans &amp; client deposits) waiting.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
+  <?php endif; ?>
+  <?php if (partner_tier_blocked()): ?>
+    <div class="alert alert-error">Admin referral accounts are switched off in the database. Run <code>supabase/migrations/20261125_admin_unlimited_partner.sql</code> in the Supabase SQL Editor — admins get their unlimited Growth Partner account on their next page load.</div>
   <?php endif; ?>
   <?php if ($pay['payment_qr'] === ''): ?>
     <div class="alert alert-warn">No payment QR code yet — Growth Partners can't pay for Standard and clients can't pay deposits until you add one in the <a href="#payment" onclick="document.querySelector('.admin-tab[data-panel=payment]').click()">Payment tab</a>.</div>
@@ -618,14 +701,18 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           <tr>
             <td><strong><?= e($p['full_name']) ?></strong></td>
             <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
-            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= $p['role'] === 'client' ? '<br><span class="hint">Growth Partner · ' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
+            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= in_array($p['role'], ['client', 'admin'], true) ? '<br><span class="hint">Growth Partner · ' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
             <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
-            <td style="font-size:12px"><?php if ($p['role'] !== 'client'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>Client permanent<br><span class="hint">no partner plan</span><?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
+            <td style="font-size:12px"><?php if ($p['role'] === 'admin'): ?>Permanent<br><span class="hint">partner never expires</span><?php elseif ($p['role'] !== 'client'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>Client permanent<br><span class="hint">no partner plan</span><?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
             <td>
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 <a class="btn btn-sm" href="/dashboard-admin.php?edit_user=<?= e($p['id']) ?>#users">Edit</a>
-                <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_role"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_role"><?php foreach ($roleOptions as $ro): ?><option value="<?= e($ro) ?>" <?= $p['role'] === $ro ? 'selected' : '' ?>><?= e(role_name($ro)) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
+                <?php if ($p['id'] === $adminId): ?>
+                  <span class="hint" style="align-self:center" title="Ask another admin to change your role">Your account</span>
+                <?php else: $choices = $p['role'] === 'admin' ? ADMIN_ROLE_TARGETS : $roleOptions; ?>
+                <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_role"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_role" <?= $p['role'] === 'admin' ? 'title="An admin can only step down to Staff"' : '' ?>><?php foreach ($choices as $ro): ?><option value="<?= e($ro) ?>" <?= $p['role'] === $ro ? 'selected' : '' ?>><?= e(role_name($ro)) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
+                <?php endif; ?>
                 <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_status"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_status"><?php foreach ($statusOptions as $so): ?><option <?= $p['status'] === $so ? 'selected' : '' ?>><?= e($so) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
                 <form method="post" class="inline-form" onsubmit="return confirm('Soft-delete this user?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="soft_delete"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Trash</button></form>
               </div>
@@ -1004,7 +1091,17 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span></td>
             <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($p['deleted_at'])) ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
-            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form></td>
+            <td><div class="bin-actions">
+              <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form>
+              <details class="bin-purge"><summary class="btn btn-sm btn-danger">Delete forever</summary>
+                <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="purge_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>">
+                  <p>This erases the account <strong>and everything attached to it</strong>: payments, commissions, referrals, tasks, reports, consents and identity documents. People they referred lose their upline. It cannot be undone.</p>
+                  <label>Type <strong><?= e($p['username']) ?></strong> to confirm</label>
+                  <input name="confirm_username" required autocomplete="off" placeholder="<?= e($p['username']) ?>">
+                  <button class="btn btn-sm btn-danger" type="submit">Delete permanently</button>
+                </form>
+              </details>
+            </div></td>
           </tr>
         <?php endforeach; ?></tbody>
       </table></div>
@@ -1023,7 +1120,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td>$<?= number_format((float) $t['amount'], 2) ?></td>
             <td style="font-size:12px"><?= e($t['notes'] ?? '—') ?></td>
             <td style="font-size:12px"><?= date('M j, Y', strtotime($t['reviewed_at'] ?? $t['created_at'])) ?></td>
-            <td><form method="post" class="inline-form" onsubmit="return confirm('Put this payment back in Approvals?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_txn"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form></td>
+            <td><div class="bin-actions"><form method="post" class="inline-form" onsubmit="return confirm('Put this payment back in Approvals?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_txn"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form>
+              <form method="post" class="inline-form" onsubmit="return confirm('Delete this payment record for good? This cannot be undone.')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="purge_txn"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Delete</button></form></div></td>
           </tr>
         <?php endforeach; ?></tbody>
       </table></div>
@@ -1042,7 +1140,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td style="font-size:12px"><?= e($t['cancel_reason'] ?? '—') ?></td>
             <td style="font-size:12px"><span class="tag"><?= e($t['cancel_approved_by'] ?: '—') ?></span></td>
             <td style="font-size:12px"><?= date('M j, Y', strtotime($t['updated_at'])) ?></td>
-            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_task"><input type="hidden" name="task_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form></td>
+            <td><div class="bin-actions"><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_task"><input type="hidden" name="task_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form>
+              <form method="post" class="inline-form" onsubmit="return confirm('Delete this task and its whole task log for good? This cannot be undone.')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="purge_task"><input type="hidden" name="task_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Delete</button></form></div></td>
           </tr>
         <?php endforeach; ?></tbody>
       </table></div>
@@ -1060,7 +1159,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td><span class="role-badge <?= ($pk['kind'] ?? 'service') === 'service' ? 'client' : 'affiliate' ?>"><?= ($pk['kind'] ?? 'service') === 'service' ? 'Service' : 'Growth Partner · ' . e(tier_label($pk['tier'])) ?></span></td>
             <td>$<?= number_format((float) $pk['price'], 2) ?></td>
             <td style="font-size:12px"><?= (float) ($pk['monthly_price'] ?? 0) > 0 ? '$' . number_format((float) $pk['monthly_price'], 2) . '/mo' : '—' ?></td>
-            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_package"><input type="hidden" name="pkg_id" value="<?= e($pk['id']) ?>"><button class="btn btn-sm" type="submit">Put back on sale</button></form></td>
+            <td><div class="bin-actions"><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_package"><input type="hidden" name="pkg_id" value="<?= e($pk['id']) ?>"><button class="btn btn-sm" type="submit">Put back on sale</button></form>
+              <form method="post" class="inline-form" onsubmit="return confirm('Delete this package for good? Past payments keep its name in their notes. This cannot be undone.')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="purge_package"><input type="hidden" name="pkg_id" value="<?= e($pk['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Delete</button></form></div></td>
           </tr>
         <?php endforeach; ?></tbody>
       </table></div>
@@ -1078,19 +1178,33 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         <a href="/dashboard-admin.php?log=other#logs" class="<?= $logCat === 'other' ? 'on' : '' ?>">Other</a>
       </nav>
       <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>system_logs // <?= e($logCat === '' ? 'all categories' : (LOG_CATEGORIES[$logCat]['label'] ?? 'other')) ?> · last 200</span></div>
-      <div class="terminal-body" style="max-height:560px;overflow-y:auto;font-size:12px">
+      <div class="terminal-body log-wrap">
         <?php if (!$allLogs): ?><div class="prompt">$ tail -f /var/log/kamteam.log</div><div class="output">[ nothing in this category yet ]</div>
-        <?php else: foreach ($allLogs as $log): $cat = log_category($log['action']); ?>
-          <div class="log-row">
-            <span style="color:var(--text-dim)"><?= date('Y-m-d H:i:s', strtotime($log['created_at'])) ?></span>
-            <span class="log-cat log-cat-<?= e($cat) ?>"><?= e(LOG_CATEGORIES[$cat]['label'] ?? 'Other') ?></span>
-            <span style="color:var(--cyan)">[<?= e($log['action']) ?>]</span>
-            <span><?= e($log['summary'] ?? '') ?></span>
-            <span style="color:var(--text-dim)">by <?= e($log['profiles']['full_name'] ?? 'system') ?></span>
-            <?php if ($log['ip_address']): ?><span style="color:var(--text-dim);font-size:10px">(<?= e($log['ip_address']) ?>)</span><?php endif; ?>
-            <?php if (($log['entity_type'] ?? '') === 'client_task' && $log['entity_id']): ?><a href="/work.php?task=<?= e($log['entity_id']) ?>" style="font-size:11px">open task →</a><?php elseif (($log['entity_type'] ?? '') === 'client_report' && $log['entity_id']): ?><a href="/work.php?report=<?= e($log['entity_id']) ?>" style="font-size:11px">open report →</a><?php endif; ?>
-          </div>
-        <?php endforeach; endif; ?>
+        <?php else: $day = null; $i = 0; ?>
+        <table class="log-table">
+          <thead><tr><th>Time</th><th>Category</th><th>Action</th><th>What happened</th><th>By</th><th>IP</th></tr></thead>
+          <tbody>
+          <?php foreach ($allLogs as $log):
+              $cat  = log_category($log['action']);
+              $when = strtotime($log['created_at']);
+              $date = date('Y-m-d', $when);
+              if ($date !== $day): $day = $date; $i = 0; ?>
+              <tr class="log-day"><td colspan="6"><?= date('l, F j, Y', $when) ?></td></tr>
+          <?php endif; ?>
+            <tr<?= ++$i % 2 === 0 ? ' class="alt"' : '' ?>>
+              <td class="log-time"><?= date('H:i:s', $when) ?></td>
+              <td><span class="log-cat log-cat-<?= e($cat) ?>"><?= e(LOG_CATEGORIES[$cat]['label'] ?? 'Other') ?></span></td>
+              <td class="log-action"><?= e($log['action']) ?></td>
+              <td class="log-what"><?= e($log['summary'] ?? '—') ?>
+                <?php if (($log['entity_type'] ?? '') === 'client_task' && $log['entity_id']): ?><a href="/work.php?task=<?= e($log['entity_id']) ?>">open task →</a>
+                <?php elseif (($log['entity_type'] ?? '') === 'client_report' && $log['entity_id']): ?><a href="/work.php?report=<?= e($log['entity_id']) ?>">open report →</a><?php endif; ?></td>
+              <td class="log-by"><?= e($log['profiles']['full_name'] ?? 'system') ?></td>
+              <td class="log-ip"><?= e($log['ip_address'] ?: '—') ?></td>
+            </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+        <?php endif; ?>
       </div>
     </div>
   </div>
