@@ -469,7 +469,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Admin // KAM Team</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>A</text></svg>">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121a">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121b">
 </head>
 <body>
 <header class="topbar">

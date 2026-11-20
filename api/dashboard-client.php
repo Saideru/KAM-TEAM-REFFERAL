@@ -84,7 +84,7 @@ $contact   = !empty($profile['assigned_admin'])
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Client // KAM Team</title>
   <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121a">
+  <link rel="stylesheet" href="/assets/styles.css?v=20261121b">
 </head>
 <body>
 <header class="topbar">
