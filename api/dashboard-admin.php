@@ -973,17 +973,96 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
   <!-- REFERRALS -->
   <div id="panel-referrals" class="admin-panel">
+    <?php
+      // Referral network: one row per account in the network, built from
+      // profiles.referred_by (the same link the partner's own downline uses).
+      // Status follows the account itself — once an admin accepts the
+      // account it reads Active; nothing to set by hand here.
+      $netById = [];
+      foreach ($liveProfiles as $np) $netById[$np['id']] = $np;
+      $netKids = [];
+      foreach ($liveProfiles as $np) {
+          if (!empty($np['referred_by']) && isset($netById[$np['referred_by']])) $netKids[$np['referred_by']][] = $np;
+      }
+      // People below an account, every level, guarded against loops.
+      $netBelow = function (string $id) use ($netKids): int {
+          $n = 0; $seen = [$id => true]; $stack = [$id];
+          while ($stack) {
+              foreach ($netKids[array_pop($stack)] ?? [] as $k) {
+                  if (isset($seen[$k['id']])) continue;
+                  $seen[$k['id']] = true; $n++; $stack[] = $k['id'];
+              }
+          }
+          return $n;
+      };
+      $netTree = function (string $id, int $lvl, array $seen) use (&$netTree, $netKids, $netBelow): string {
+          if (empty($netKids[$id])) return '';
+          $html = '<ul>';
+          foreach ($netKids[$id] as $k) {
+              if (isset($seen[$k['id']])) continue;
+              $below = $netBelow($k['id']);
+              $type  = role_name($k['role']) . (!empty($k['affiliate_tier']) && $k['role'] !== 'growth_partner' ? ' · ' . tier_label($k['affiliate_tier']) . ' partner' : (!empty($k['affiliate_tier']) ? ' · ' . tier_label($k['affiliate_tier']) : ''));
+              $html .= '<li><div class="org-node ' . e($k['role']) . ($k['status'] !== 'accepted' ? ' is-pending' : '') . '" title="Joined ' . e(date('M j, Y', strtotime($k['created_at']))) . '">'
+                     . '<span class="org-lvl">L' . $lvl . '</span><strong>' . e($k['full_name']) . '</strong>'
+                     . '<span class="org-type">' . e($type) . ($k['status'] !== 'accepted' ? ' · ' . e($k['status']) : '') . '</span>'
+                     . ($below ? '<span class="org-below">' . $below . ' below</span>' : '')
+                     . '</div>' . $netTree($k['id'], $lvl + 1, $seen + [$k['id'] => true]) . '</li>';
+          }
+          return $html . '</ul>';
+      };
+      $netStatus = fn(array $p) => match ($p['status']) {
+          'accepted'  => ['Active', 'active'],
+          'pending'   => ['Pending approval', 'pending'],
+          'rejected'  => ['Rejected', 'failed'],
+          'suspended' => ['Suspended', 'suspended'],
+          default     => [ucfirst((string) $p['status']), 'pending'],
+      };
+      $netRows = array_values(array_filter($liveProfiles, fn($np) => !empty($np['referral_code']) || !empty($np['referred_by']) || !empty($netKids[$np['id']])));
+      $netCount = [];
+      foreach ($netRows as $np) $netCount[$np['id']] = $netBelow($np['id']);
+      // Biggest networks first, then A–Z.
+      usort($netRows, fn($a, $b) => ($netCount[$b['id']] <=> $netCount[$a['id']]) ?: strcasecmp($a['full_name'], $b['full_name']));
+    ?>
     <div class="card"><h2>Referral network</h2>
-      <?php if (!$allRefs): ?><p class="empty">No referrals yet.</p>
-      <?php else: ?><div class="table-scroll"><table>
-        <thead><tr><th>Referrer</th><th>Referred</th><th>Level</th><th>Status</th><th>Created</th></tr></thead>
-        <tbody><?php foreach ($allRefs as $r): ?>
+      <p class="hint" style="margin:0 0 12px">Every account with a referral code, an upline or a downline. Status follows the account: once you accept an account it is Active. Totals count every level below the account.</p>
+      <?php if (!$netRows): ?><p class="empty">No referrals yet.</p>
+      <?php else: ?><div class="table-scroll" tabindex="0" role="region" aria-label="Referral network"><table class="users-table net-table">
+        <thead><tr><th scope="col">Account</th><th scope="col">Upline</th><th scope="col">Status</th><th scope="col" class="num">Direct (L1)</th><th scope="col" class="num">Total downline</th><th scope="col" class="ut-actions-h">Tree</th></tr></thead>
+        <tbody><?php foreach ($netRows as $np):
+            $up = $netById[$np['referred_by'] ?? ''] ?? null;
+            [$stLabel, $stPill] = $netStatus($np);
+            $direct = count($netKids[$np['id']] ?? []);
+            $total  = $netCount[$np['id']];
+            $dlgId  = 'tree-' . $np['id'];
+        ?>
           <tr>
-            <td><strong><?= e($r['referrer']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referrer']['username'] ?? '') ?></span></td>
-            <td><strong><?= e($r['referred']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($r['referred']['username'] ?? '') ?></span></td>
-            <td>L<?= e((string) $r['level']) ?></td>
-            <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="edit_referral"><input type="hidden" name="ref_id" value="<?= e($r['id']) ?>"><select name="ref_status"><?php foreach ($refStatusOptions as $rs): ?><option <?= $r['status'] === $rs ? 'selected' : '' ?>><?= e($rs) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Save</button></form></td>
-            <td style="font-size:12px"><?= date('M j, Y', strtotime($r['created_at'])) ?></td>
+            <td class="ut-account">
+              <span class="ut-avatar" aria-hidden="true"><?= e(strtoupper(mb_substr((string) $np['full_name'], 0, 1)) ?: '?') ?></span>
+              <span class="ut-id"><strong><?= e($np['full_name']) ?></strong>
+                <span class="ut-sub">@<?= e($np['username']) ?> · <?= e(role_name($np['role'])) ?></span>
+                <?php if (!empty($np['referral_code'])): ?><span class="ut-sub"><span class="ref-code"><?= e($np['referral_code']) ?></span></span><?php endif; ?>
+              </span>
+            </td>
+            <td><?= $up ? '<strong>' . e($up['full_name']) . '</strong><span class="ut-sub">@' . e($up['username']) . '</span>' : '<span class="hint">— top of network</span>' ?></td>
+            <td><span class="pill <?= e($stPill) ?>"><?= e($stLabel) ?></span></td>
+            <td class="num"><?= $direct ?></td>
+            <td class="num"><strong class="net-total"><?= $total ?></strong></td>
+            <td class="ut-actions">
+              <?php if ($total): ?>
+                <button type="button" class="btn btn-sm" onclick="document.getElementById('<?= e($dlgId) ?>').showModal()">View tree →</button>
+                <dialog class="tree-dialog" id="<?= e($dlgId) ?>" aria-labelledby="<?= e($dlgId) ?>-t">
+                  <div class="tree-dlg-head">
+                    <div><span class="label"><?= $total ?> in downline · <?= $direct ?> direct</span><h3 id="<?= e($dlgId) ?>-t"><?= e($np['full_name']) ?>'s tree</h3></div>
+                    <form method="dialog"><button class="btn btn-sm btn-ghost" type="submit">Close</button></form>
+                  </div>
+                  <div class="tree-dlg-body">
+                    <div class="org"><div class="org-inner"><ul><li><div class="org-node org-root"><span class="org-lvl">Top</span><strong><?= e($np['full_name']) ?></strong><span class="org-type"><?= e($np['referral_code'] ?: role_name($np['role'])) ?></span></div><?= $netTree($np['id'], 1, [$np['id'] => true]) ?></li></ul></div></div>
+                  </div>
+                </dialog>
+              <?php else: ?>
+                <span class="hint">No downline</span>
+              <?php endif; ?>
+            </td>
           </tr>
         <?php endforeach; ?></tbody>
       </table></div><?php endif; ?>

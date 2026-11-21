@@ -1036,3 +1036,20 @@ body.idle-warning { overflow: hidden; }
 .quick-card .label { margin: 0; color: var(--text); }
 .quick-go { font: 600 16px var(--font); color: var(--rust); }
 @media (max-width: 480px) { .share-code { flex-direction: column; } }
+
+/* ---------- Admin > Referral network ---------- */
+.net-table { min-width: 860px; }
+.net-table .num { text-align: center; font-family: var(--font); }
+.net-total { font-size: 16px; color: var(--rust); }
+.tree-dialog {
+  width: min(1100px, calc(100vw - 32px)); max-height: min(85vh, 760px);
+  padding: 0; border: 1px solid var(--border-light); border-radius: var(--radius);
+  background: var(--bg); color: var(--text); box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+  white-space: normal; text-align: left;
+}
+.tree-dialog[open] { display: flex; flex-direction: column; }
+.tree-dialog::backdrop { background: rgba(26, 25, 23, .55); }
+.tree-dlg-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border-light); }
+.tree-dlg-head h3 { margin: 4px 0 0; font-size: 18px; }
+.tree-dlg-head form { margin: 0; }
+.tree-dlg-body { padding: 16px 18px; overflow: auto; }
