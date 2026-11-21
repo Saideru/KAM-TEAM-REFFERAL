@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/work.php';
 
 // Client Work Documentation & Reporting (SOP-OPS-001) — admin & staff workspace.
@@ -262,25 +263,18 @@ if ($view === 'report') {
     }
 }
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Client work // KAM Team</title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <div style="display:flex;align-items:center;gap:10px">
-      <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label <?= e($profile['role']) ?>"><?= e(role_name($profile['role'])) ?></span>
-      <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-    </div>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Client work // KAM Team',
+    'description' => 'Task tracker and client reporting under ' . SOP_ID . ' v' . SOP_VERSION . '.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<?= ui_topbar([
+    'csrf'       => $csrf,
+    'bell'       => notif_bell($token, $profile, $csrf),
+    'role'       => role_name($profile['role']),
+    'role_class' => $profile['role'],
+]) ?>
 
 <div class="shell">
 <?= app_sidebar(array_merge($isAdmin ? [['label' => 'Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']] : [], [
@@ -288,7 +282,7 @@ if ($view === 'report') {
     ['label' => 'Client reports',  'href' => '/work.php?view=reports', 'icon' => 'log'],
     ['label' => 'Program docs →',  'href' => '/report.php?doc=components', 'icon' => 'brief'],
 ]),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : '/work.php') ?>
-<main class="wrap">
+<main class="wrap" id="main" tabindex="-1">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>
   <h1>Client work. <span class="accent">Traceable, verified, reported.</span></h1>
   <p class="hint" style="margin:-6px 0 14px">Every task is traceable to a scope, assigned to an owner, supported by evidence, verified before it is Completed, and included in the right client report. Names in the role fields are tags only.</p>
@@ -501,13 +495,4 @@ if ($view === 'report') {
 <?php endif; ?>
 </main>
 </div>
-<script>
-(function () {
-  var sel = document.getElementById('st-sel');
-  if (!sel) return;
-  function sync() { document.querySelectorAll('.st-extra').forEach(function (el) { el.style.display = el.dataset.for === sel.value ? '' : 'none'; }); }
-  sel.addEventListener('change', sync); sync();
-})();
-</script>
-</body>
-</html>
+<?= ui_foot() ?>

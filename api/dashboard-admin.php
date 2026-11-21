@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 
 ['token' => $token, 'profile' => $profile] = require_role('admin');
 $errors = [];
@@ -586,26 +587,18 @@ $binTasks     = is_array($binTasksRes['body']) && !$binTasksRes['error'] ? $binT
 $trashCount   = count($binUsers) + count($binTxns) + count($binPkgs) + count($binTasks);
 $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin // KAM Team</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>A</text></svg>">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <div style="display:flex;align-items:center;gap:10px">
-      <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label admin">Admin</span>
-      <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-    </div>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Admin // KAM Team',
+    'description' => 'KAM Team mission control: users, approvals, packages, transactions and audit logs.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<?= ui_topbar([
+    'csrf'       => $csrf,
+    'bell'       => notif_bell($token, $profile, $csrf),
+    'role'       => 'Admin',
+    'role_class' => 'admin',
+]) ?>
 
 <div class="shell">
 <?= app_sidebar([
@@ -625,19 +618,18 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     ['label' => 'My referral account →', 'href' => '/dashboard-affiliate.php', 'icon' => 'link'],
     ['label' => 'Program docs →', 'href' => '/report.php?doc=components', 'icon' => 'log'],
 ], 'Admin', 'users') ?>
-<main class="wrap">
-  <span class="label"><span class="dot"></span>Mission control // <?= e($profile['full_name'] ?? '') ?></span>
-  <h1>Admin dashboard. <span class="accent">Manage the program.</span></h1>
+<main class="wrap" id="main" tabindex="-1">
+  <?= ui_page_title('Mission control // ' . e($profile['full_name'] ?? ''), 'Admin dashboard.', 'Manage the program.') ?>
 
-  <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
-  <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
+  <?= ui_alerts($notice, $errors) ?>
 
-  <section class="grid">
-    <div class="card"><span class="label">01 // Users</span><div class="big cyan"><?= $totalUsers ?></div><span class="label" style="font-size:10px;display:block;margin-top:4px"><?= $adminCount ?> admin · <?= $staffCount ?> staff · <?= $clientCount ?> member<?= $clientCount === 1 ? '' : 's' ?> (<?= $gpCount ?> on a partner plan)</span></div>
-    <div class="card"><span class="label">02 // Referrals</span><div class="big"><?= count($allRefs) ?></div></div>
-    <div class="card"><span class="label">03 // Packages</span><div class="big"><?= count($allPkgs) ?></div></div>
-    <div class="card"><span class="label">04 // Revenue</span><div class="big green">$<?= number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2) ?></div></div>
-  </section>
+  <?= ui_stat_grid([
+      ['label' => 'Users',    'value' => $totalUsers, 'tone' => 'cyan',
+       'note'  => $adminCount . ' admin &middot; ' . $staffCount . ' staff &middot; ' . $clientCount . ' member' . ($clientCount === 1 ? '' : 's') . ' (' . $gpCount . ' on a partner plan)'],
+      ['label' => 'Referrals', 'value' => count($allRefs)],
+      ['label' => 'Packages',  'value' => count($allPkgs)],
+      ['label' => 'Revenue',   'value' => '$' . number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2), 'tone' => 'green'],
+  ]) ?>
 
   <?php if ($approvalCount): ?>
     <div class="alert alert-warn"><strong><?= count($applications) ?> account application<?= count($applications) === 1 ? '' : 's' ?> and <?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> (Growth Partner plans &amp; client deposits) waiting.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
@@ -1211,21 +1203,4 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 </main>
 </div>
 
-<script>
-  (function () {
-    var tabs = document.querySelectorAll('.admin-tab'), panels = document.querySelectorAll('.admin-panel');
-    tabs.forEach(function (tab) {
-      tab.addEventListener('click', function () {
-        tabs.forEach(function (t) { t.classList.remove('active'); });
-        panels.forEach(function (p) { p.classList.remove('active'); });
-        tab.classList.add('active');
-        document.getElementById('panel-' + tab.dataset.panel).classList.add('active');
-        history.replaceState(null, '', '#' + tab.dataset.panel);
-      });
-    });
-    var hash = location.hash.replace('#', '');
-    if (hash) { var t = document.querySelector('.admin-tab[data-panel="' + hash + '"]'); if (t) t.click(); }
-  })();
-</script>
-</body>
-</html>
+<?= ui_foot() ?>

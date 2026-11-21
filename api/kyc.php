@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 
 // Reachable before a plan is chosen: Standard can't be paid for without
 // approved identity documents.
@@ -68,31 +69,22 @@ $badge = [
     'rejected'      => ['Rejected',     'failed'],
 ][$status];
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Identity verification // KAMTEAM</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect fill='%230a0a0f' width='20' height='20' rx='4'/><text x='3' y='15' font-size='13' fill='%2300f0ff'>K</text></svg>">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <div style="display:flex;align-items:center;gap:10px">
-      <a class="btn btn-ghost btn-sm" href="<?= e($dashUrl) ?>">Dashboard</a>
-      <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-    </div>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Identity verification // KAM Team',
+    'description' => 'Submit a government ID so your Growth Partner account can be verified.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<?= ui_topbar([
+    'csrf'  => $csrf,
+    'links' => [['label' => 'Dashboard', 'href' => $dashUrl]],
+]) ?>
 
-<main class="wrap">
+<main class="wrap" id="main" tabindex="-1">
   <span class="label"><span class="dot"></span>Identity verification</span>
   <h1>Verify your <span class="accent">identity</span>.</h1>
 
-  <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
-  <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>&gt; <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
+  <?= ui_alerts($notice, $errors) ?>
 
   <div class="card" style="margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -187,5 +179,4 @@ $badge = [
     </section>
   <?php endif; ?>
 </main>
-</body>
-</html>
+<?= ui_foot() ?>

@@ -96,7 +96,7 @@ function client_ip(): string
 // Lists every section by title, one "Read" button opens all the rules in a
 // popup, and a single checkbox unlocks once the popup has been read to the
 // end. Ticking it accepts every section plus the e-signature.
-function terms_checklist(array $checked, string $kicker = '04 // Program terms'): string
+function terms_checklist(array $checked, string $kicker = '04 // Program terms', string $submitId = ''): string
 {
     $list = $body = '';
     foreach (terms_sections() as $sec) {
@@ -109,7 +109,7 @@ function terms_checklist(array $checked, string $kicker = '04 // Program terms')
     $body .= '<section><h4>Appendix A — E-signature &amp; consent</h4><p>' . e(TERMS_SIGNATURE) . '</p></section>';
     $ok = !empty($checked['all']);
 
-    return '<fieldset class="biz-fieldset terms-checklist" id="terms-checklist">'
+    return '<fieldset class="biz-fieldset terms-checklist" id="terms-checklist"' . ($submitId !== '' ? ' data-submit="' . e($submitId) . '"' : '') . '>'
         . '<legend><span class="label kicker">' . e($kicker) . '</span>Rules and guidelines</legend>'
         . '<p class="terms-meta">' . e(TERMS_PROGRAM) . ' · Manual v' . e(TERMS_VERSION) . ' · Effective ' . e(TERMS_EFFECTIVE) . ' · Philippine law</p>'
         . '<ol class="terms-sections">' . $list . '</ol>'
@@ -124,26 +124,6 @@ function terms_checklist(array $checked, string $kicker = '04 // Program terms')
         .   '<button type="button" class="btn btn-sm btn-ghost" data-close>Close</button>'
         .   '<button type="button" class="btn btn-sm btn-solid" data-agree disabled>I agree</button></div>'
         . '</dialog></fieldset>';
-}
-
-// Popup, read-before-accept lock, and keeps $submitId disabled until the
-// box is ticked.
-function terms_checklist_script(string $submitId): string
-{
-    return '<script>(function(){'
-        . 'var root=document.getElementById("terms-checklist"),box=root.querySelector("input[data-terms]"),open=root.querySelector("[data-open]"),'
-        . 'd=document.getElementById("terms-dlg"),body=d.querySelector(".terms-dlg-body"),ok=d.querySelector("[data-agree]"),submit=document.getElementById(' . json_encode($submitId) . ');'
-        . 'function refresh(){root.classList.toggle("done",box.checked);if(submit)submit.disabled=!box.checked;}'
-        . 'function check(){if(body.scrollTop+body.clientHeight>=body.scrollHeight-8){ok.disabled=false;d.classList.add("is-read");}}'
-        . 'function close(){d.close?d.close():d.removeAttribute("open");}'
-        . 'body.addEventListener("scroll",check);'
-        . 'open.addEventListener("click",function(){d.showModal?d.showModal():d.setAttribute("open","");body.scrollTop=0;check();});'
-        . 'd.querySelector("[data-close]").addEventListener("click",close);'
-        . 'd.addEventListener("click",function(e){if(e.target===d)close();});'
-        . 'ok.addEventListener("click",function(){box.disabled=false;box.checked=true;open.textContent="Read again";close();refresh();});'
-        // A locked box opens the rules instead of silently doing nothing.
-        . 'box.closest("label").addEventListener("click",function(e){if(box.disabled){e.preventDefault();open.click();}});'
-        . 'box.addEventListener("change",refresh);refresh();})();</script>';
 }
 
 // Only the known checklist keys from a POST.

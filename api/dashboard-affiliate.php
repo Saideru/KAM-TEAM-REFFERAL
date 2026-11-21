@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 
 // The Growth Partner side of a member account: plan, term, referral code,
 // downline and earnings. It is also the plan chooser every approved member
@@ -116,25 +117,18 @@ $offered    = array_values(array_filter($packages, fn($p) => $offer($p) !== null
 // account stays closed until a plan is chosen.
 $gated      = !$tier && !$pending;
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Growth Partner // KAM Team</title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <div style="display:flex;align-items:center;gap:10px">
-      <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label <?= $isAdmin ? 'admin' : 'affiliate' ?>"><?= $isAdmin ? 'Admin' : 'Growth Partner' ?><?= $tier ? ' · ' . e(tier_label($tier)) : '' ?></span>
-      <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-    </div>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Growth Partner // KAM Team',
+    'description' => 'Your Growth Partner plan, referral link, downline and commissions.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<?= ui_topbar([
+    'csrf'       => $csrf,
+    'bell'       => notif_bell($token, $profile, $csrf),
+    'role'       => ($isAdmin ? 'Admin' : 'Growth Partner') . ($tier ? ' · ' . tier_label($tier) : ''),
+    'role_class' => $isAdmin ? 'admin' : 'affiliate',
+]) ?>
 
 <div class="shell">
 <?= app_sidebar($gated ? [
@@ -151,22 +145,24 @@ $gated      = !$tier && !$pending;
     ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
     ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
 ], 'Growth Partner') ?>
-<main class="wrap">
+<main class="wrap" id="main" tabindex="-1">
   <?php if (!$gated): ?>
   <nav class="account-switch" aria-label="Account">
     <a href="<?= $isAdmin ? '/dashboard-admin.php' : '/dashboard-client.php' ?>"><?= $isAdmin ? 'Admin dashboard' : 'Client account' ?></a>
     <a href="/dashboard-affiliate.php" class="on">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?></small></a>
   </nav>
   <?php endif; ?>
-  <span class="label"><span class="dot" style="background:var(--yellow)"></span>KAM Growth Partnership Program // <?= e($profile['referral_code'] ?? '') ?></span>
-  <h1><?= $gated || isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--yellow)"><?= $tier ? 'Refer clients, earn commission.' : 'Choose your plan.' ?></span></h1>
+  <?= ui_page_title(
+        'KAM Growth Partnership Program // ' . e($profile['referral_code'] ?? ''),
+        ($gated || isset($_GET['welcome']) ? 'Welcome, ' : '') . $firstName . '.',
+        $tier ? 'Refer clients, earn commission.' : 'Choose your plan.'
+  ) ?>
   <?php if ($gated): ?>
     <div class="alert alert-warn" style="margin-bottom:12px"><strong>One last step.</strong> Your account is approved. Pick your Growth Partner plan below — <strong>Basic</strong> starts free right away, <strong>Standard</strong> costs US$100 — and your dashboard opens. Your Client account is permanent either way; only the Growth Partner side carries a term.</div>
   <?php endif; ?>
 
-  <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
+  <?= ui_alerts($notice, $errors) ?>
   <?= kyc_banner($profile) ?>
-  <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
 
   <?php if ($state === 'grace'): ?>
     <div class="alert alert-error"><strong>Your <?= e(tier_label($tier)) ?> term expired on <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>.</strong>
@@ -190,7 +186,7 @@ $gated      = !$tier && !$pending;
 
   <?php if (!$unlimited): ?>
   <section id="plans" style="margin-bottom:20px">
-    <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>partner_plan.sh // <?= $tier ? 'Your plan: ' . e(tier_label($tier)) : 'Choose your Growth Partner plan' ?></span></div>
+    <?= ui_terminal_head('partner_plan.sh // ' . ($tier ? 'Your plan: ' . tier_label($tier) : 'Choose your Growth Partner plan')) ?>
     <div class="terminal-body">
       <?php if ($pending): ?>
         <div class="pending-box">
@@ -277,7 +273,4 @@ $gated      = !$tier && !$pending;
   <?php endif; ?>
 </main>
 </div>
-<?= lifecycle_countdown_script() ?>
-<?= sidebar_scrollspy_script() ?>
-</body>
-</html>
+<?= ui_foot() ?>

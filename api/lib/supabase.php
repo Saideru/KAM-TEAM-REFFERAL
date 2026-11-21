@@ -70,6 +70,66 @@ function _clear_session(): void
     setcookie('kt_session', '', ['expires' => 1, 'path' => '/', 'httponly' => true, 'samesite' => 'Lax', 'secure' => _cookie_secure()]);
 }
 
+// =====================================================================
+// Idle timeout — every signed-in account is signed out after IDLE_TIMEOUT
+// seconds without activity. The server is the authority (the cookie carries
+// the last-activity stamp); assets/js/app.js only mirrors the same clock in
+// the browser so the user gets a warning instead of a surprise.
+// =====================================================================
+
+const IDLE_TIMEOUT = 300;   // 5 minutes of inactivity
+const IDLE_WARNING = 60;    // warn the user this long before the cut-off
+const IDLE_TOUCH_GAP = 15;  // don't rewrite the cookie more often than this
+
+function session_last_seen(): int
+{
+    $s = &_session();
+    return (int) ($s['sb']['seen'] ?? $s['sb']['iat'] ?? 0);
+}
+
+function session_idle_seconds(): int
+{
+    $seen = session_last_seen();
+    return $seen ? max(0, time() - $seen) : 0;
+}
+
+function session_idle_remaining(): int
+{
+    return max(0, IDLE_TIMEOUT - session_idle_seconds());
+}
+
+function session_idle_expired(): bool
+{
+    $s = &_session();
+    return !empty($s['sb']) && session_idle_seconds() > IDLE_TIMEOUT;
+}
+
+// Marks the session as active. Automated reloads (?auto=1, e.g. the approval
+// wall refreshing itself) must not count as activity, so they are ignored.
+function session_touch(bool $force = false): void
+{
+    $s = &_session();
+    if (empty($s['sb'])) return;
+    if (!$force && isset($_GET['auto'])) return;
+    $now = time();
+    if (!$force && $now - session_last_seen() < IDLE_TOUCH_GAP) return;
+    $s['sb']['seen'] = $now;
+    _save_session();
+}
+
+// Ends an idle session and sends the visitor back to the login page.
+function end_idle_session(): void
+{
+    if ($token = supabase_access_token()) {
+        $s = &_session();
+        audit_log($token, 'logout_idle', 'user', $s['sb']['user_id'] ?? null, 'Signed out after ' . (IDLE_TIMEOUT / 60) . ' minutes of inactivity');
+    }
+    supabase_sign_out_local();
+    flash('warn', 'You were signed out after ' . (IDLE_TIMEOUT / 60) . ' minutes of inactivity. Please sign in again.');
+    header('Location: /index.php?timeout=1');
+    exit;
+}
+
 // Signed-in pages must never be served from the browser cache, so the Back
 // button after logout asks the server again (and lands on the login page).
 function no_store_headers(): void
@@ -245,6 +305,7 @@ function supabase_store_session(array $profile): void
         'user_id'  => $profile['id'],
         'username' => $profile['username'],
         'iat'      => time(),
+        'seen'     => time(),
     ];
     _save_session();
 }
@@ -279,6 +340,8 @@ function require_login(): string
         header('Location: /index.php');
         exit;
     }
+    if (session_idle_expired()) end_idle_session();
+    session_touch();
     return $token;
 }
 
@@ -967,7 +1030,7 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
           . '<span class="label">Your referral code — ' . e($profile['referral_code'] ?? '') . '</span>';
     if ($canRefer) {
         $out .= '<div class="share" style="margin-top:8px"><input id="share-link" type="text" readonly value="' . e($link) . '">'
-              . '<button class="btn btn-sm" type="button" data-copy="share-link">Copy →</button></div>';
+              . '<button class="btn btn-sm" type="button" data-copy="#share-link">Copy →</button></div>';
     } else {
         $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your Growth Partner term has expired. New referrals are not credited until you renew or upgrade.</p>';
     }
@@ -984,7 +1047,7 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
     if (!$coms) {
         $out .= '<p class="empty">No commissions yet.</p>';
     } else {
-        $out .= '<div class="table-scroll"><table><thead><tr><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
+        $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Commission ledger"><table><thead><tr><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
         foreach ($coms as $c) {
             $out .= '<tr><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
                   . '<td style="color:var(--green)">$' . number_format((float) $c['amount'], 2) . '</td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td></tr>';
@@ -995,9 +1058,8 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
 
     $out .= downline_graph_html($token, $profile);
 
-    return $out . '<script>document.querySelectorAll("[data-copy]").forEach(function(btn){btn.addEventListener("click",function(){'
-        . 'var i=document.getElementById(btn.dataset.copy);i.select();(navigator.clipboard?navigator.clipboard.writeText(i.value):Promise.reject())'
-        . '.catch(function(){document.execCommand("copy");}).finally(function(){btn.textContent="Copied ✓";setTimeout(function(){btn.textContent="Copy →";},1800);});});});</script>';
+    // The copy button's behaviour lives in assets/js/app.js (copyButtons).
+    return $out;
 }
 
 // ---- Downline graph ---------------------------------------------------
@@ -1184,35 +1246,16 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
         $count = !empty($it['count']) ? '<span class="tab-count">' . (int) $it['count'] . '</span>' : '';
         $inner = $svg . '<span class="side-label">' . e($it['label']) . '</span>' . $count;
         if (isset($it['panel'])) {
-            $out .= '<button type="button" class="side-link admin-tab' . ($active === $it['panel'] ? ' active' : '') . '" data-panel="' . e($it['panel']) . '">' . $inner . '</button>';
+            $on = $active === $it['panel'];
+            $out .= '<button type="button" class="side-link admin-tab' . ($on ? ' active' : '') . '"'
+                . ($on ? ' aria-current="true"' : '') . ' data-panel="' . e($it['panel']) . '">' . $inner . '</button>';
         } else {
-            $out .= '<a class="side-link' . ($active === $it['href'] ? ' active' : '') . '" href="' . e($it['href']) . '">' . $inner . '</a>';
+            $on = $active === $it['href'];
+            $out .= '<a class="side-link' . ($on ? ' active' : '') . '"' . ($on ? ' aria-current="page"' : '')
+                . ' href="' . e($it['href']) . '">' . $inner . '</a>';
         }
     }
     return '<aside class="sidebar" aria-label="' . e($title) . '"><div class="side-title">' . e($title) . '</div><nav class="side-nav">' . $out . '</nav></aside>';
-}
-
-// Highlights the sidebar link for the section currently on screen.
-function sidebar_scrollspy_script(): string
-{
-    return <<<'JS'
-<script>
-(function () {
-  var links = [].slice.call(document.querySelectorAll('.side-nav a[href^="#"]'));
-  if (!links.length || !('IntersectionObserver' in window)) return;
-  var byId = {};
-  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (en) {
-      if (!en.isIntersecting) return;
-      links.forEach(function (a) { a.classList.remove('active'); });
-      if (byId[en.target.id]) byId[en.target.id].classList.add('active');
-    });
-  }, { rootMargin: '-30% 0px -60% 0px' });
-  Object.keys(byId).forEach(function (id) { var el = document.getElementById(id); if (el) io.observe(el); });
-})();
-</script>
-JS;
 }
 
 // =====================================================================
@@ -1260,14 +1303,7 @@ function notif_bell(string $token, array $profile, string $csrf): string
         . ($unread ? '<span class="notif-count">' . ($unread > 9 ? '9+' : $unread) . '</span>' : '')
         . '</summary>'
         . '<div class="notif-panel"><div class="notif-head">Notifications</div>' . $list . '</div>'
-        . '</details>'
-        . '<script>(function(){var d=document.currentScript.previousElementSibling;d.addEventListener("toggle",function(){'
-        . 'if(!d.open||!d.querySelector(".notif-count"))return;var f=new FormData();f.append("csrf",d.dataset.csrf);'
-        . 'fetch("/notifications.php",{method:"POST",body:f,credentials:"same-origin"}).then(function(){var c=d.querySelector(".notif-count");if(c)c.remove();});});'
-        . 'document.addEventListener("click",function(e){if(d.open&&!d.contains(e.target))d.open=false;});'
-        // Back/forward restored this page from memory: ask the server again so
-        // a signed-out visitor is sent to the login page.
-        . 'window.addEventListener("pageshow",function(e){if(e.persisted)location.reload();});})();</script>';
+        . '</details>';
 }
 
 // =====================================================================
@@ -1496,40 +1532,6 @@ function lifecycle_countdown(array $profile, string $title): string
         . '<div class="cd-total" data-cd="total">' . e($lc['text']) . '</div>'
         . '<div class="lifecycle-bar"><div class="lifecycle-fill ' . e($lc['class']) . '" data-cd="bar" style="width:' . $lc['pct'] . '%"></div></div>'
         . '</div>';
-}
-
-function lifecycle_countdown_script(): string
-{
-    return <<<'JS'
-<script>
-(function () {
-  document.querySelectorAll('[data-countdown]').forEach(function (el) {
-    var expires = +el.dataset.expires, start = +el.dataset.start;
-    var skew = +el.dataset.now - Date.now();            // trust the server clock
-    var q = function (k) { return el.querySelector('[data-cd="' + k + '"]'); };
-    var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
-    q('expiry').textContent = 'Expires ' + new Date(expires).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-    function tick() {
-      var left = Math.max(0, expires - (Date.now() + skew));
-      var s = Math.floor(left / 1000);
-      var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
-      q('d').textContent = d; q('h').textContent = pad(h); q('m').textContent = pad(m); q('s').textContent = pad(s % 60);
-      var hours = Math.floor(s / 3600);
-      q('total').textContent = left > 0
-        ? hours.toLocaleString() + ' hours ' + pad(m) + ' minutes remaining'
-        : 'Account expired';
-      var pct = Math.round(left / Math.max(expires - start, 1) * 100);
-      var bar = q('bar');
-      bar.style.width = pct + '%';
-      bar.className = 'lifecycle-fill ' + (pct < 20 ? 'critical' : pct < 40 ? 'warn' : 'ok');
-      el.classList.toggle('is-expired', left === 0);
-      if (left > 0) setTimeout(tick, 1000 - (Date.now() % 1000));
-    }
-    tick();
-  });
-})();
-</script>
-JS;
 }
 
 // =====================================================================

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 
 // Approval wall: shown to every account an admin has not approved yet.
 $token   = require_login();
@@ -12,25 +13,19 @@ $csrf     = csrf_token();
 $rejected = $profile['status'] === 'rejected';
 $first    = explode(' ', $profile['full_name'])[0];
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <?php if (!$rejected): ?><meta http-equiv="refresh" content="60"><?php endif; ?>
-  <title>Application <?= $rejected ? 'not approved' : 'under review' ?> // KAM Team</title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Application ' . ($rejected ? 'not approved' : 'under review') . ' // KAM Team',
+    'description' => 'Your KAM Growth Partnership Program application status.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+    // The automatic re-check carries ?auto=1 so it is not mistaken for
+    // activity by the inactivity watchdog (see session_touch()).
+    'refresh'     => $rejected ? null : '60;url=/pending.php?auto=1',
+]) ?>
+<?= ui_topbar(['csrf' => $csrf]) ?>
 
-<main class="wrap wall">
-  <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>access_control.sh // approval wall</span></div>
+<main class="wrap wall" id="main" tabindex="-1">
+  <?= ui_terminal_head('access_control.sh // approval wall') ?>
   <div class="terminal-body wall-body">
     <div class="prompt">$ kamteam --status <?= e($profile['username']) ?></div>
     <?php if ($rejected): ?>
@@ -52,5 +47,4 @@ $first    = explode(' ', $profile['full_name'])[0];
     <?php if (!$rejected): ?><a class="btn btn-sm" href="/pending.php">Check again →</a><?php endif; ?>
   </div>
 </main>
-</body>
-</html>
+<?= ui_foot() ?>

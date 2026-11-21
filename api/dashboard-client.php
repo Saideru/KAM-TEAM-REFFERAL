@@ -2,6 +2,7 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
+require_once __DIR__ . '/lib/ui.php';
 
 // The Client side of a member account — permanent. Buys service packages
 // (50% advance deposit before setup starts), follows work progress and reads
@@ -78,25 +79,18 @@ $openTasks = count(array_filter($tasks, fn($t) => !in_array($t['status'], ['comp
 $contact   = !empty($profile['assigned_admin'])
     ? (supabase_request('GET', '/rest/v1/profiles?select=full_name&id=eq.' . urlencode($profile['assigned_admin']), null, $token)['body'][0]['full_name'] ?? null) : null;
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Client // KAM Team</title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <div style="display:flex;align-items:center;gap:10px">
-      <?= notif_bell($token, $profile, $csrf) ?>
-      <span class="role-label client">Client</span>
-      <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-    </div>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Client // KAM Team',
+    'description' => 'Your KAM Team service packages, work progress and reports.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<?= ui_topbar([
+    'csrf'       => $csrf,
+    'bell'       => notif_bell($token, $profile, $csrf),
+    'role'       => 'Client',
+    'role_class' => 'client',
+]) ?>
 
 <div class="shell">
 <?= app_sidebar([
@@ -108,28 +102,30 @@ $contact   = !empty($profile['assigned_admin'])
     ['label' => 'Growth Partner →',   'href' => '/dashboard-affiliate.php', 'icon' => 'link'],
     ['label' => 'Verify ID',          'href' => '/kyc.php',  'icon' => 'id'],
 ], 'Client') ?>
-<main class="wrap">
+<main class="wrap" id="main" tabindex="-1">
   <nav class="account-switch" aria-label="Account">
     <a href="/dashboard-client.php" class="on">Client account</a>
     <a href="/dashboard-affiliate.php">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?><?= $profile['affiliate_tier'] ? ' · ' . e(tier_label($profile['affiliate_tier'])) : '' ?></small></a>
   </nav>
 
-  <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
-  <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
+  <?= ui_alerts($notice, $errors) ?>
 
-  <span class="label"><span class="dot" style="background:var(--orange)"></span>Client // <?= e($profile['company'] ?: $profile['username']) ?></span>
-  <h1><?= isset($_GET['welcome']) ? 'Welcome, ' : '' ?><?= e($firstName) ?>. <span class="accent" style="color:var(--rust)">Your KAM Team services.</span></h1>
+  <?= ui_page_title(
+        'Client // ' . e($profile['company'] ?: $profile['username']),
+        (isset($_GET['welcome']) ? 'Welcome, ' : '') . $firstName . '.',
+        'Your KAM Team services.'
+  ) ?>
 
-  <section class="grid" id="overview">
-    <div class="card"><span class="label">01 // Active packages</span><div class="big cyan"><?= count($activeDeps) ?></div></div>
-    <div class="card"><span class="label">02 // Tasks in progress</span><div class="big"><?= $openTasks ?></div></div>
-    <div class="card"><span class="label">03 // Tasks completed</span><div class="big green"><?= $doneTasks ?></div></div>
-    <div class="card"><span class="label">04 // Reports</span><div class="big orange"><?= count($reports) ?></div></div>
-  </section>
+  <?= ui_stat_grid([
+      ['label' => 'Active packages',   'value' => count($activeDeps), 'tone' => 'cyan'],
+      ['label' => 'Tasks in progress', 'value' => $openTasks],
+      ['label' => 'Tasks completed',   'value' => $doneTasks,         'tone' => 'green'],
+      ['label' => 'Reports',           'value' => count($reports),    'tone' => 'orange'],
+  ], 'overview') ?>
   <?php if ($contact): ?><p class="hint" style="margin:-4px 0 14px">Your KAM Team contact: <strong><?= e($contact) ?></strong></p><?php endif; ?>
 
   <section id="packages" style="margin-bottom:20px">
-    <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>service_packages.sh // 50% advance deposit to start</span></div>
+    <?= ui_terminal_head('service_packages.sh // 50% advance deposit to start') ?>
     <div class="terminal-body">
       <div class="output" style="margin-bottom:14px">Prices in USD. A 50% down payment on the one-time setup fee is required before setup starts; the remaining 50% and the monthly fee are invoiced separately.</div>
 
@@ -181,19 +177,19 @@ $contact   = !empty($profile['assigned_admin'])
 
   <section class="card" id="progress" style="margin-bottom:12px"><h2>Work progress</h2>
     <?php if ($activeDeps): ?>
-      <div class="table-scroll" style="margin-bottom:12px"><table><thead><tr><th>Package</th><th>Deposit paid</th><th>Confirmed</th><th>Monthly</th></tr></thead><tbody>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Active packages" style="margin-bottom:12px"><table><thead><tr><th>Package</th><th>Deposit paid</th><th>Confirmed</th><th>Monthly</th></tr></thead><tbody>
         <?php foreach ($activeDeps as $t): ?><tr><td><strong><?= e($t['packages']['name'] ?? '—') ?></strong></td><td>$<?= number_format((float) $t['amount'], 2) ?></td><td style="font-size:12px"><?= date('M j, Y', strtotime($t['reviewed_at'] ?? $t['created_at'])) ?></td><td style="font-size:12px"><?= (float) ($t['packages']['monthly_price'] ?? 0) > 0 ? '$' . number_format((float) $t['packages']['monthly_price'], 2) . '/mo' : '—' ?></td></tr><?php endforeach; ?>
       </tbody></table></div>
     <?php endif; ?>
     <?php if (!$miles): ?><p class="empty">Work hasn't started yet. Milestones appear here once your KAM Team contact plans the work.</p>
-    <?php else: ?><div class="table-scroll"><table><thead><tr><th>Package › milestone</th><th>Progress</th><th>Status</th></tr></thead><tbody>
+    <?php else: ?><div class="table-scroll" tabindex="0" role="region" aria-label="Work milestones"><table><thead><tr><th>Package › milestone</th><th>Progress</th><th>Status</th></tr></thead><tbody>
       <?php foreach ($miles as $m): ?><tr><td><?= e($m['name']) ?></td><td><div class="lifecycle-bar" style="max-width:180px"><div class="lifecycle-fill ok" style="width:<?= $m['pct'] ?>%"></div></div><span class="hint"><?= $m['done'] ?> of <?= $m['total'] ?> tasks verified complete</span></td><td><?= status_pill($m['status']) ?></td></tr><?php endforeach; ?>
     </tbody></table></div><?php endif; ?>
   </section>
 
   <section class="card" id="reports" style="margin-bottom:12px"><h2>Reports</h2>
     <?php if (!$reports): ?><p class="empty">No reports yet. Weekly or monthly reports appear here once they are reviewed and approved.</p>
-    <?php else: ?><div class="table-scroll"><table><thead><tr><th>Report</th><th>Package</th><th>Period</th><th>Received</th><th></th></tr></thead><tbody>
+    <?php else: ?><div class="table-scroll" tabindex="0" role="region" aria-label="Delivered reports"><table><thead><tr><th>Report</th><th>Package</th><th>Period</th><th>Received</th><th></th></tr></thead><tbody>
       <?php foreach ($reports as $r): ?><tr><td><?= e(REPORT_TYPES[$r['report_type']] ?? $r['report_type']) ?> <span class="hint">v<?= (int) $r['version'] ?></span></td><td style="font-size:12px"><?= e($r['packages']['name'] ?? 'All services') ?></td><td style="font-size:12px"><?= date('M j', strtotime($r['period_start'])) ?> – <?= date('M j, Y', strtotime($r['period_end'])) ?></td><td style="font-size:12px"><?= date('M j, Y', strtotime($r['delivered_at'])) ?></td><td><a class="btn btn-sm" href="/report.php?id=<?= e($r['id']) ?>">Open →</a></td></tr><?php endforeach; ?>
     </tbody></table></div><?php endif; ?>
   </section>
@@ -201,6 +197,4 @@ $contact   = !empty($profile['assigned_admin'])
   <?= business_card($token, $profile, $csrf) ?>
 </main>
 </div>
-<?= sidebar_scrollspy_script() ?>
-</body>
-</html>
+<?= ui_foot() ?>

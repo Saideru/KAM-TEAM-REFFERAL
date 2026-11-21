@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 
 // Members who have not accepted the current program manual land here from
 // require_role() and cannot reach their dashboard until they accept it.
@@ -33,36 +34,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 }
 $first = explode(' ', $profile['full_name'])[0];
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Program terms // KAM Team</title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= kam_lockup() ?>
-    <form method="post" action="/logout.php" style="margin:0"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>
-  </div>
-</header>
+<?= ui_head([
+    'title'       => 'Program terms // KAM Team',
+    'description' => 'Read and accept the current KAM Growth Partnership Program manual.',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<?= ui_topbar(['csrf' => $csrf]) ?>
 
-<main class="wrap wall">
-  <div class="terminal-header"><span class="dots"><span></span><span></span><span></span></span><span>terms.sh // program manual v<?= e(TERMS_VERSION) ?></span></div>
+<main class="wrap wall" id="main" tabindex="-1">
+  <?= ui_terminal_head('terms.sh // program manual v' . TERMS_VERSION) ?>
   <div class="terminal-body wall-body">
     <span class="label"><span class="dot pulse"></span>Action required</span>
     <h1><?= e($first) ?>, <span class="accent">please review the program terms.</span></h1>
     <p class="output">The <?= e(TERMS_PROGRAM) ?> manual is now version <?= e(TERMS_VERSION) ?><?= !empty($profile['terms_version']) ? ' (you accepted v' . e($profile['terms_version']) . ')' : '' ?>. Accept each section below to continue to your dashboard.</p>
-    <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
+    <?= ui_alerts(null, $errors) ?>
     <form method="post" style="margin-top:16px">
       <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
-      <?= terms_checklist($checked, 'Program terms') ?>
+      <?= terms_checklist($checked, 'Program terms', 'terms-submit') ?>
       <button class="btn btn-solid" type="submit" id="terms-submit">I agree — continue <span aria-hidden="true">→</span></button>
     </form>
   </div>
 </main>
-<?= terms_checklist_script('terms-submit') ?>
-</body>
-</html>
+<?= ui_foot() ?>

@@ -14,6 +14,7 @@
     { "source": "/dashboard-referral.php", "destination": "/api/index.php" },
     { "source": "/dashboard-client.php", "destination": "/api/dashboard-client.php" },
     { "source": "/logout.php", "destination": "/api/logout.php" },
+    { "source": "/session.php", "destination": "/api/session.php" },
     { "source": "/pending.php", "destination": "/api/pending.php" },
     { "source": "/notifications.php", "destination": "/api/notifications.php" },
     { "source": "/business.php", "destination": "/api/business.php" },

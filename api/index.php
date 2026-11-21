@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
+require_once __DIR__ . '/lib/ui.php';
 
 if (supabase_configured() && supabase_access_token()) {
     redirect_by_role();
@@ -11,6 +12,12 @@ $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] 
 $errors = [];
 $old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
 $notice = flash();
+
+// Fallback copy when the idle watchdog sent the visitor here and the flash
+// cookie did not survive (private mode, blocked cookies).
+if (!$notice && isset($_GET['timeout'])) {
+    $notice = ['type' => 'warn', 'message' => 'You were signed out after ' . (IDLE_TIMEOUT / 60) . ' minutes of inactivity. Please sign in again.'];
+}
 
 if ($ref !== '' && !isset($_GET['mode'])) {
     $mode = 'register';
@@ -88,17 +95,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $csrf = csrf_token();
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KAM Growth Partnership Program</title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body>
-<main class="auth">
+<?= ui_head([
+    'title'       => 'Sign in // KAM Growth Partnership Program',
+    'description' => 'Sign in or register for the KAM Growth Partnership Program: buy KAM Team services as a Client and refer clients as a Growth Partner.',
+    'body_class'  => 'auth-page',
+]) ?>
+<main class="auth" id="main" tabindex="-1">
 
   <section class="auth-brand">
     <div class="scan-line"></div>
@@ -135,8 +137,7 @@ $csrf = csrf_token();
         <div class="alert alert-warn">Configuration needed: add Supabase environment variables.</div>
       <?php endif; ?>
 
-      <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
-      <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
+      <?= ui_alerts($notice, $errors) ?>
 
       <div id="panel-login" role="tabpanel" <?= $mode === 'login' ? '' : 'hidden' ?>>
         <span class="label kicker">01 // Authentication</span>
@@ -216,7 +217,7 @@ $csrf = csrf_token();
             <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Were you invited? Enter their code so they get credited.</small>
           </div>
 
-          <?= terms_checklist($old['terms']) ?>
+          <?= terms_checklist($old['terms'], '04 // Program terms', 'reg-submit') ?>
 
           <button class="btn btn-solid" type="submit" id="reg-submit">Create account <span aria-hidden="true">→</span></button>
         </form>
@@ -228,27 +229,4 @@ $csrf = csrf_token();
   </section>
 </main>
 
-<script>
-  (function () {
-    var panels = { login: document.getElementById('panel-login'), register: document.getElementById('panel-register') };
-    var tabs = document.querySelectorAll('.tab');
-    function show(mode) {
-      Object.keys(panels).forEach(function (k) { panels[k].hidden = k !== mode; });
-      tabs.forEach(function (t) { t.setAttribute('aria-selected', t.dataset.mode === mode ? 'true' : 'false'); });
-      var first = panels[mode].querySelector('input:not([type=hidden]):not([type=radio]):not([type=checkbox])');
-      if (first) first.focus();
-    }
-    document.querySelectorAll('[data-mode]').forEach(function (el) { el.addEventListener('click', function () { show(el.dataset.mode); }); });
-    document.querySelectorAll('.pw-toggle').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var input = btn.parentElement.querySelector('input');
-        var visible = input.type === 'text';
-        input.type = visible ? 'password' : 'text';
-        btn.textContent = visible ? 'Show' : 'Hide';
-      });
-    });
-  })();
-</script>
-<?= terms_checklist_script('reg-submit') ?>
-</body>
-</html>
+<?= ui_foot() ?>

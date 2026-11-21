@@ -2,6 +2,7 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
+require_once __DIR__ . '/lib/ui.php';
 
 // Printable documents. Two kinds, so the app keeps one print-styled page:
 //   ?id=…               a client report (SOP-OPS-001 Appendix B). Admins and
@@ -10,21 +11,20 @@ require_once __DIR__ . '/lib/work.php';
 //   ?doc=components     the program reference for admins and staff.
 // Print → Save as PDF uses the document's file name as the page title.
 ['token' => $token, 'profile' => $profile] = require_role(['admin', 'staff', 'client']);
+$csrf = csrf_token();
 
 if (($_GET['doc'] ?? '') === 'components') {
     require_once __DIR__ . '/lib/docs.php';
     if (!is_team($profile)) { http_response_code(403); header('Location: ' . dashboard_url($profile['role'])); exit; }
     $back = $profile['role'] === 'admin' ? '/dashboard-admin.php' : '/work.php';
-    ?><!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KAM-TEAM_Program-Components_v<?= e(PROGRAM_DOC_VERSION) ?></title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body class="report-page">
-<main class="wrap report-doc program-doc">
+    ?><?= ui_head([
+    'title'       => 'KAM-TEAM_Program-Components_v' . PROGRAM_DOC_VERSION,
+    'description' => 'What every account type can do inside the KAM Growth Partnership Program.',
+    'body_class'  => 'report-page',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<main class="wrap report-doc program-doc" id="main" tabindex="-1">
   <div class="report-actions no-print">
     <a class="btn btn-sm btn-ghost" href="<?= e($back) ?>">← Back</a>
     <button class="btn btn-sm btn-solid" type="button" onclick="window.print()">Print / save as PDF</button>
@@ -38,8 +38,7 @@ if (($_GET['doc'] ?? '') === 'components') {
   <?= program_doc_html() ?>
   <p class="hint" style="margin-top:20px">KAM TEAM · Program components v<?= e(PROGRAM_DOC_VERSION) ?> · generated from the live program.</p>
 </main>
-</body>
-</html>
+<?= ui_foot() ?>
 <?php
     exit;
 }
@@ -60,16 +59,14 @@ $pName = $rep['packages']['name'] ?? '';
 $data  = $rep['status'] === 'draft' || !$rep['snapshot'] ? report_compile($token, $rep) : $rep['snapshot'];
 if (!$isAdmin) audit_log($token, 'report_viewed', 'client_report', $rep['id'], $cName . ' opened v' . $rep['version']);
 ?>
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><?= e(report_filename($rep, $cName, $pName)) ?></title>
-  <link rel="icon" type="image/png" href="/assets/img/kam-team-mark.png">
-  <link rel="stylesheet" href="/assets/styles.css?v=20261121e">
-</head>
-<body class="report-page">
-<main class="wrap report-doc">
+<?= ui_head([
+    'title'       => report_filename($rep, $cName, $pName),
+    'description' => 'KAM Team client report.',
+    'body_class'  => 'report-page',
+    'csrf'        => $csrf,
+    'idle'        => true,
+]) ?>
+<main class="wrap report-doc" id="main" tabindex="-1">
   <div class="report-actions no-print">
     <a class="btn btn-sm btn-ghost" href="<?= $isAdmin ? '/work.php?report=' . e($rep['id']) : '/dashboard-client.php#reports' ?>">← Back</a>
     <button class="btn btn-sm btn-solid" type="button" onclick="window.print()">Print / save as PDF</button>
@@ -84,5 +81,4 @@ if (!$isAdmin) audit_log($token, 'report_viewed', 'client_report', $rep['id'], $
   <?= report_body_html($rep, $cName, $pName, $data) ?>
   <p class="hint" style="margin-top:20px">KAM TEAM · Prepared under <?= SOP_ID ?> v<?= SOP_VERSION ?> · <?= e(report_filename($rep, $cName, $pName)) ?>.pdf</p>
 </main>
-</body>
-</html>
+<?= ui_foot() ?>
