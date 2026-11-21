@@ -133,7 +133,7 @@ becomes a horizontally scrolling tab strip under 900px; stat grids go 4 → 2 �
 | Rule | `api/lib/supabase.php` | `IDLE_TIMEOUT = 300`, `IDLE_WARNING = 60` |
 | Enforcement | `require_login()` | Idle session → cleared, audit-logged (`logout_idle`), redirected to `/index.php?timeout=1` |
 | Activity stamp | `session_touch()` | Updates `seen` in the session cookie, at most once per 15s. Ignores automated loads carrying `?auto=1` |
-| Heartbeat | `api/session.php` | `POST` (+CSRF) marks activity; `GET` reports remaining seconds without extending |
+| Heartbeat | `api/notifications.php` (served as `/session.php` and `/notifications.php`) | `action=ping`: `POST` (+CSRF) marks activity, `GET` reports remaining seconds without extending. `action=seen` marks notifications read. The two share one file because Vercel counts every `api/*.php` as a Serverless Function and the plan allows 12 |
 | Warning UI | `ui_idle_watchdog()` + `.idle-dialog` | Modal at 60s left with a live countdown, "Stay signed in" / "Sign out now", focus trapped, Esc keeps the session |
 | Browser clock | `idleWatch` in `app.js` | Tracks real interaction only, shares the last-activity time across tabs via `localStorage`, pings the server at most once a minute, submits the timeout logout at 0 |
 
@@ -155,4 +155,4 @@ Before delivery:
 - [ ] New CSS uses tokens; no new hardcoded colour or spacing value
 - [ ] `php -l` clean on every changed file; no console errors in the browser
 - [ ] CSRF token on every new form; all output escaped with `e()`
-- [ ] New route added to `vercel.json`
+- [ ] New route added to `vercel.json` — and the `api/*.php` count is still 12 or fewer (Vercel plan limit)

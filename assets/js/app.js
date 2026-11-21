@@ -159,6 +159,7 @@
       if (!bell.open || !$('.notif-count', bell)) return;
       var form = new FormData();
       form.append('csrf', bell.dataset.csrf);
+      form.append('action', 'seen');
       fetch('/notifications.php', { method: 'POST', body: form, credentials: 'same-origin' })
         .then(function () {
           var count = $('.notif-count', bell);
@@ -327,6 +328,7 @@
       lastPing = Date.now();
       var data = new FormData();
       data.append('csrf', form.elements.csrf.value);
+      data.append('action', 'ping');
       fetch('/session.php', { method: 'POST', body: data, credentials: 'same-origin' })
         .catch(function () { /* offline: the local clock still protects the session */ });
     }
