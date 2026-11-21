@@ -142,6 +142,7 @@ function ui_topbar(array $o): string
 
     return '<header class="topbar">' . "\n"
         . '  <div class="topbar-inner">' . kam_lockup()
+        . (!empty($o['welcome']) ? '<span class="topbar-welcome">Welcome <em>' . e((string) $o['welcome']) . '</em></span>' : '')
         . '<div class="topbar-actions">' . $right . '</div></div>' . "\n"
         . "</header>\n";
 }

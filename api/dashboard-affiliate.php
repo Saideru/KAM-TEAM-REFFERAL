@@ -175,6 +175,7 @@ if ($switchedFromAdmin) {
 <?= ui_topbar([
     'csrf'       => $csrf,
     'bell'       => notif_bell($token, $profile, $csrf),
+    'welcome'    => $profile['full_name'] ?? '',
     'role'       => ($switchedFromAdmin ? 'Admin · Growth Partner' : ($isAdmin ? 'Admin' : 'Growth Partner')) . ($tier ? ' · ' . tier_label($tier) : ''),
     'role_class' => $switchedFromAdmin || $isAdmin ? 'admin' : 'affiliate',
     'links'      => $topLinks,
@@ -356,6 +357,7 @@ foreach ($pages as $key => $pg) {
   <?php if (!$gated): ?>
     <div data-live="gp-<?= e($view) ?>">
     <?php if ($view === 'overview'): ?>
+      <?= networth_html($token, $profile, (string) ($_GET['period'] ?? 'month'), $base . '?view=overview') ?>
       <?= affiliate_account_html($token, $profile, $canRefer, ['stats']) ?>
       <nav class="quick-grid" aria-label="Growth Partner pages">
         <?php foreach ($pages as $key => $pg): if ($key === 'overview') continue; ?>

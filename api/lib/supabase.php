@@ -1983,3 +1983,82 @@ function format_lifecycle(array $profile): array
 
     return ['text' => $text, 'pct' => $pct, 'class' => $class, 'days' => $days, 'expires' => date('M j, Y', $expires)];
 }
+
+/**
+ * Overview "networth" panel for a Growth Partner: Total Networth (Outright +
+ * Uni-Level), Total Outright and Total Uni-Level commission for the chosen
+ * period, with a run-rate forecast to the end of that period.
+ *   $period 'month' → this calendar month, 'year' → this calendar year.
+ * Commission rows are told apart by their notes (Uni-Level rows say so).
+ */
+function networth_html(string $token, array $profile, string $period = 'month', string $base = '/dashboard-affiliate.php?view=overview'): string
+{
+    $period = $period === 'year' ? 'year' : 'month';
+    $uid  = urlencode($profile['id']);
+    $coms = supabase_request('GET', '/rest/v1/transactions?select=amount,created_at,notes&type=eq.commission&status=eq.completed&user_id=eq.' . $uid . '&order=created_at.asc', null, $token)['body'] ?? [];
+    $coms = is_array($coms) ? $coms : [];
+
+    $now   = time();
+    $start = $period === 'year' ? strtotime(date('Y-01-01 00:00:00', $now)) : strtotime(date('Y-m-01 00:00:00', $now));
+    $end   = $period === 'year' ? strtotime(date('Y-01-01 00:00:00', $now) . ' +1 year') : strtotime(date('Y-m-01 00:00:00', $now) . ' +1 month');
+
+    $out = 0.0; $uni = 0.0; $allOut = 0.0; $allUni = 0.0;
+    $byMonth = array_fill(1, 12, ['out' => 0.0, 'uni' => 0.0]);
+    $thisYear = date('Y', $now);
+    foreach ($coms as $c) {
+        $amt  = (float) ($c['amount'] ?? 0);
+        $ts   = strtotime((string) ($c['created_at'] ?? ''));
+        $isUni = str_contains((string) ($c['notes'] ?? ''), 'Uni-Level');
+        $isUni ? $allUni += $amt : $allOut += $amt;
+        if ($ts && date('Y', $ts) === $thisYear) {
+            $byMonth[(int) date('n', $ts)][$isUni ? 'uni' : 'out'] += $amt;
+        }
+        if ($ts >= $start && $ts < $end) $isUni ? $uni += $amt : $out += $amt;
+    }
+    $net = $out + $uni;
+
+    // Run-rate forecast: what this period ends at if the pace so far holds.
+    $elapsed  = max(1, $now - $start);
+    $factor   = ($end - $start) / $elapsed;
+    $fcNet    = $net * $factor;
+    $fcOut    = $out * $factor;
+    $fcUni    = $uni * $factor;
+    $label    = $period === 'year' ? date('Y', $now) : date('F Y', $now);
+    $endLabel = $period === 'year' ? 'year end' : 'month end';
+    $money = fn(float $v) => '$' . number_format($v, 2);
+
+    $btn = fn(string $p, string $text) => '<a class="seg-btn' . ($period === $p ? ' is-on' : '') . '" href="' . e($base . '&period=' . $p) . '"' . ($period === $p ? ' aria-current="true"' : '') . '>' . $text . '</a>';
+
+    $box = fn(string $title, float $val, float $fc, float $all, string $cls = '') =>
+        '<div class="nw-box' . $cls . '"><span class="nw-title">' . e($title) . '</span>'
+        . '<div class="nw-val">' . $money($val) . '</div>'
+        . '<span class="nw-sub">' . e($label) . '</span>'
+        . '<span class="nw-fc">Forecast to ' . e($endLabel) . ': <strong>' . $money($fc) . '</strong></span>'
+        . '<span class="nw-all">All time: ' . $money($all) . '</span></div>';
+
+    $html = '<section class="card nw-panel" aria-labelledby="nw-h">'
+        . '<div class="nw-head"><div><span class="label">Forecast</span><h2 id="nw-h" class="nw-h">Your networth · ' . e($label) . '</h2></div>'
+        . '<nav class="seg" aria-label="Forecast period">' . $btn('month', 'Month') . $btn('year', 'Year') . '</nav></div>'
+        . '<div class="nw-grid">'
+        . $box('Total Networth', $net, $fcNet, $allOut + $allUni, ' nw-main')
+        . $box('Total Outright Commission', $out, $fcOut, $allOut)
+        . $box('Total Uni-Level Commission', $uni, $fcUni, $allUni)
+        . '</div>';
+
+    if ($period === 'year') {
+        // Month by month: Outright + Uni-Level = that month's networth.
+        $max = max(0.01, ...array_map(fn($m) => $m['out'] + $m['uni'], $byMonth));
+        $cur = (int) date('n', $now);
+        $html .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Networth by month"><table class="nw-months"><thead><tr><th scope="col">Month</th><th scope="col" class="num">Outright</th><th scope="col" class="num">Uni-Level</th><th scope="col" class="num">Networth</th><th scope="col"><span class="sr-only">Share</span></th></tr></thead><tbody>';
+        foreach ($byMonth as $m => $v) {
+            $t = $v['out'] + $v['uni'];
+            $html .= '<tr' . ($m === $cur ? ' class="is-cur"' : ($m > $cur ? ' class="is-future"' : '')) . '><th scope="row">' . date('M', mktime(0, 0, 0, $m, 1)) . '</th>'
+                . '<td class="num">' . $money($v['out']) . '</td><td class="num">' . $money($v['uni']) . '</td><td class="num"><strong>' . $money($t) . '</strong></td>'
+                . '<td class="nw-bar-cell"><span class="nw-bar" style="width:' . round($t / $max * 100, 1) . '%"></span></td></tr>';
+        }
+        $html .= '</tbody></table></div>';
+    }
+
+    $html .= '<p class="hint nw-note">Networth = Outright commission (10% of your clients\' deposits) + Uni-Level commission (5% of your direct Co-growth Partners\' Outright). The forecast assumes the pace so far continues; it is an estimate, not guaranteed income.</p></section>';
+    return $html;
+}
