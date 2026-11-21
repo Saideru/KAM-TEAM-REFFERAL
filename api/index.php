@@ -62,8 +62,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old['business_struggles'] = array_values(array_intersect(array_keys(BUSINESS_STRUGGLES), (array) ($_POST['business_struggles'] ?? [])));
         $old['business_notes']     = mb_substr(trim((string) ($_POST['business_notes'] ?? '')), 0, 1000);
 
-        if ($old['business_nature'] === '')                    $errors[] = 'Tell us the nature of your business.';
-        if (!$old['business_struggles'] && $old['business_notes'] === '') $errors[] = 'Pick at least one struggle, or tell us more about what you need.';
+        // "About your business" belongs to the Client account — it tells
+        // KAM TEAM which services fit. A Growth Partner refers clients and
+        // does not buy services, so the section is hidden for them and
+        // anything posted in it is dropped.
+        if ($old['account_mode'] === 'client') {
+            if ($old['business_nature'] === '')                    $errors[] = 'Tell us the nature of your business.';
+            if (!$old['business_struggles'] && $old['business_notes'] === '') $errors[] = 'Pick at least one struggle, or tell us more about what you need.';
+        } else {
+            $old['business_nature']    = '';
+            $old['business_struggles'] = [];
+            $old['business_notes']     = '';
+        }
 
         // Growth Partners must sign up through another partner's link, so
         // every new partner joins an existing downline (Manual §4). Clients
@@ -90,7 +100,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'phone'     => $old['phone'],
                 'company'   => $old['company'],
                 'ref'       => $ref,
-                'business_nature'    => $old['business_nature'],
+                'business_nature'    => $old['business_nature'] ?: null,
                 'business_struggles' => $old['business_struggles'],
                 'business_notes'     => $old['business_notes'] ?: null,
                 'terms'              => $old['terms'],
@@ -183,7 +193,7 @@ $csrf = csrf_token();
         <p class="sub">Pick the account that fits you now — you can add the other side any time.</p>
 
         <?php if ($ref !== ''): ?>
-          <div class="ref-badge"><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
+          <div class="ref-badge" id="ref-badge"<?= $old['account_mode'] === 'affiliate' ? '' : ' hidden' ?>><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
         <?php endif; ?>
 
         <form method="post" action="/index.php" novalidate>
@@ -225,7 +235,8 @@ $csrf = csrf_token();
             <div class="field"><label for="reg-password2">Confirm</label><input id="reg-password2" name="password_confirm" type="password" autocomplete="new-password" minlength="8" required placeholder="••••••••"></div>
           </div>
 
-          <fieldset class="biz-fieldset">
+          <?php $bizOn = $old['account_mode'] !== 'affiliate'; ?>
+          <fieldset class="biz-fieldset" id="biz-fieldset"<?= $bizOn ? '' : ' hidden disabled' ?>>
             <legend><span class="label kicker">03 // About your business</span>So we know how KAM Team can help.</legend>
             <div class="field">
               <label for="reg-nature">What's the nature of your business?</label>
@@ -295,21 +306,33 @@ $csrf = csrf_token();
   Array.prototype.forEach.call(document.querySelectorAll('[data-mode]'), function (el) {
     el.addEventListener('click', function () { show(el.dataset.mode); });
   });
-  // Highlight the selected account-type tile and show the ref field only
-  // for Growth Partners (who must carry a referral code).
+  // Highlight the selected account-type card, then show only the parts
+  // of the form that belong to that account type:
+  //   Client          -> "About your business" shown, referral code hidden
+  //   Growth Partner  -> referral code shown (required), business hidden
+  // A hidden section is also disabled, so its required fields can't
+  // block the submit and its values are not sent.
   var refField = document.getElementById('ref-field');
   var refInput = document.getElementById('reg-ref');
+  var bizField = document.getElementById('biz-fieldset');
   function syncAcctMode() {
     var checked = document.querySelector('.acct-tile input:checked');
-    var mode = checked ? checked.value : 'client';
+    var affiliate = (checked ? checked.value : 'client') === 'affiliate';
     Array.prototype.forEach.call(document.querySelectorAll('.acct-tile'), function (tile) {
       tile.classList.toggle('is-on', tile.contains(checked));
     });
-    if (!refField || !refInput) return;
-    var affiliate = mode === 'affiliate';
-    refField.hidden = !affiliate;
-    if (affiliate) refInput.setAttribute('required', '');
-    else refInput.removeAttribute('required');
+    if (refField && refInput) {
+      refField.hidden = !affiliate;
+      refInput.disabled = !affiliate;
+      if (affiliate) refInput.setAttribute('required', '');
+      else refInput.removeAttribute('required');
+    }
+    if (bizField) {
+      bizField.hidden = affiliate;
+      bizField.disabled = affiliate;
+    }
+    var badge = document.getElementById('ref-badge');
+    if (badge) badge.hidden = !affiliate;
   }
   Array.prototype.forEach.call(document.querySelectorAll('.acct-tile input'), function (radio) {
     radio.addEventListener('change', syncAcctMode);
