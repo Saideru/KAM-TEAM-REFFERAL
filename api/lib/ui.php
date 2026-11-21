@@ -122,7 +122,7 @@ function ui_topbar(array $o): string
     if (!empty($o['toggle']['to'])) {
         $t  = $o['toggle'];
         $on = !empty($t['on']);
-        $right .= '<form class="acct-toggle-form" method="post" action="/notifications.php">'
+        $right .= '<form class="acct-toggle-form" method="post" action="/notifications.php" onsubmit="this.classList.add(\'is-going\')">'
             . '<input type="hidden" name="csrf" value="' . e($o['csrf']) . '">'
             . '<input type="hidden" name="action" value="switch">'
             . '<input type="hidden" name="to" value="' . e((string) $t['to']) . '">'

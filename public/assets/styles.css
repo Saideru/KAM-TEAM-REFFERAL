@@ -1146,3 +1146,21 @@ body.idle-warning { overflow: hidden; }
 @media (max-width: 520px) { .po-row, .po-methods { grid-template-columns: 1fr; } .po-bar-text { font-size: 18px; } }
 .po-links .btn { width: auto; flex: 0 0 auto; padding-left: 22px; padding-right: 22px; }
 .po-toggle input, .po-act input { font: inherit; font-size: var(--text-sm); padding: 8px 10px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--surface-2); color: var(--text); }
+
+/* ── Admin ⇄ own Growth Partner account: soft toggle in the top bar ───── */
+.acct-toggle-form { margin: 0; display: inline-flex; }
+.acct-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border: 1px solid var(--border-light); border-radius: 999px; background: var(--surface-2); cursor: pointer; font-family: var(--font); font-size: var(--text-2xs); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); transition: border-color .2s, background .2s; }
+.acct-toggle:hover { border-color: var(--orange); }
+.acct-toggle:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.acct-toggle-side { transition: color .2s; white-space: nowrap; }
+.acct-toggle-side.is-cur { color: var(--text); font-weight: 600; }
+.acct-toggle-track { position: relative; width: 34px; height: 18px; border-radius: 999px; background: var(--text); flex: none; transition: background .25s; }
+.acct-toggle-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .25s cubic-bezier(.3,.7,.3,1); }
+.acct-toggle.is-on .acct-toggle-track { background: var(--orange); }
+.acct-toggle.is-on .acct-toggle-knob { transform: translateX(16px); }
+/* Slide the knob as soon as it's clicked, before the page changes. */
+.acct-toggle:active .acct-toggle-knob { transform: translateX(8px); }
+.acct-toggle-form.is-going .acct-toggle-knob { transform: translateX(16px); }
+.acct-toggle-form.is-going .acct-toggle.is-on .acct-toggle-knob { transform: translateX(0); }
+@media (prefers-reduced-motion: reduce) { .acct-toggle-knob, .acct-toggle-track { transition: none; } }
+@media (max-width: 720px) { .acct-toggle-side:not(.is-cur) { display: none; } }
