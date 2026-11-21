@@ -458,10 +458,32 @@ function redirect_by_role(?string $welcome = null): void
 }
 
 // True when the user still has to accept the current manual version.
-function terms_outdated(?array $profile): bool
+function terms_outdated(?array $profile, ?bool $teamPartner = null): bool
 {
-    return $profile && !is_team($profile)
-        && ($profile['terms_version'] ?? '') !== TERMS_VERSION;
+    if (!$profile || is_team($profile)) return false;
+    // An admin's (or staff member's) own Growth Partner row belongs to KAM
+    // TEAM's people, so it is exempt like the team account it is linked to.
+    if ($teamPartner ?? is_team_partner($profile)) return false;
+    return ($profile['terms_version'] ?? '') !== TERMS_VERSION;
+}
+
+// True for a growth_partner row whose linked account is an admin or staff
+// member — e.g. admin-gp, linked to the main admin. Looked up once per id.
+// Pass the linked row's role when it is already known to skip the lookup.
+function is_team_partner(?array $profile, ?string $linkedRole = null): bool
+{
+    static $roles = [];
+    if (($profile['role'] ?? '') !== 'growth_partner' || empty($profile['linked_profile_id'])) return false;
+
+    $id = $profile['linked_profile_id'];
+    if ($linkedRole === null) {
+        if (!array_key_exists($id, $roles)) {
+            $res = supabase_request('GET', '/rest/v1/profiles?select=role&id=eq.' . urlencode($id));
+            $roles[$id] = $res['body'][0]['role'] ?? null;
+        }
+        $linkedRole = $roles[$id];
+    }
+    return in_array($linkedRole, ['admin', 'staff'], true);
 }
 
 function require_role(string|array $allowed): array
@@ -613,9 +635,13 @@ function tier_unlimited(?array $p): bool
 // nothing, so a demoted admin has to choose a real plan like any member.
 function partner_tier_for_role(string $role, ?string $current): ?string
 {
-    if ($role === 'admin') return TIER_UNLIMITED;
-    if ($role === 'staff') return null;
-    return $current === TIER_UNLIMITED ? null : $current;   // client keeps a real plan
+    // An admin's partner side lives on its own linked growth_partner row
+    // (migration 20261128), so the admin row itself carries no tier.
+    if ($role === 'admin' || $role === 'staff') return null;
+    // A Growth Partner row keeps whatever it has — including Unlimited on
+    // an admin's own partner row.
+    if ($role === 'growth_partner') return $current;
+    return $current === TIER_UNLIMITED ? null : $current;   // legacy dual-side client keeps a real plan
 }
 
 // Set once the database refused 'unlimited', i.e. migration 20261125 has
@@ -963,8 +989,13 @@ function reject_activation(string $token, string $txnId, string $adminId, string
 
 function role_name(string $role): string
 {
-    // One member account is both, so 'client' covers Client + Growth Partner.
-    return ['admin' => 'Admin', 'staff' => 'Staff', 'client' => 'Client', 'affiliate' => 'Client'][$role] ?? $role;
+    return [
+        'admin'          => 'Admin',
+        'staff'          => 'Staff',
+        'client'         => 'Client',
+        'growth_partner' => 'Growth Partner',
+        'affiliate'      => 'Client',          // legacy rows, pre-migration
+    ][$role] ?? ucwords(str_replace('_', ' ', $role));
 }
 
 // Turns "the database hasn't been migrated yet" errors into instructions.

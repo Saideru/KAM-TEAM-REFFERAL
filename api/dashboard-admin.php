@@ -8,7 +8,7 @@ $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
 
-$roleOptions      = ['admin', 'staff', 'client'];
+$roleOptions      = ['admin', 'staff', 'growth_partner', 'client'];
 // What an existing admin account may be changed to: Staff, or stay Admin.
 const ADMIN_ROLE_TARGETS = ['admin', 'staff'];
 $statusOptions    = ['pending', 'accepted', 'suspended', 'rejected'];
@@ -39,7 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             $patch = ['role' => $role, 'affiliate_tier' => partner_tier_for_role($role, $cur['affiliate_tier'] ?? null)];
             // Only a member's partner side runs on a clock. An admin's never
             // expires; staff have no partner account at all.
-            if ($role !== 'client' || $patch['affiliate_tier'] === null) $patch['lifecycle_expires_at'] = null;
+            if (!in_array($role, ['client', 'growth_partner'], true) || $patch['affiliate_tier'] === null || $patch['affiliate_tier'] === TIER_UNLIMITED) {
+                $patch['lifecycle_expires_at'] = null;
+            }
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), $patch, $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'role_change', 'profile', $uid, 'Changed role to ' . $role);
@@ -691,18 +693,64 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       </form>
     </details>
 
+    <?php
+      // Account types for the filter bar. A legacy dual-side member
+      // (role 'client' with a partner plan) counts as both Client and
+      // Growth Partner, so it shows under either filter.
+      $byId     = array_column($liveProfiles, null, 'id');
+      $typesOf  = function (array $p): array {
+          $t = [$p['role'] === 'affiliate' ? 'client' : $p['role']];
+          if ($p['role'] === 'client' && !empty($p['affiliate_tier'])) $t[] = 'growth_partner';
+          return $t;
+      };
+      $typeCount = ['admin' => 0, 'staff' => 0, 'growth_partner' => 0, 'client' => 0];
+      foreach ($liveProfiles as $p) foreach ($typesOf($p) as $t) if (isset($typeCount[$t])) $typeCount[$t]++;
+      $linkedName = function (array $p) use ($byId): ?string {
+          $l = $byId[$p['linked_profile_id'] ?? ''] ?? null;
+          return $l ? $l['username'] : null;
+      };
+    ?>
     <div class="card"><h2>All users<?= $binUsers ? ' <span class="hint">· ' . count($binUsers) . ' in the <a href="/dashboard-admin.php#trash" onclick="document.querySelector(\'.admin-tab[data-panel=trash]\').click()">recycle bin</a></span>' : '' ?></h2>
-      <div class="table-scroll"><table>
+
+      <div class="filter-bar" role="group" aria-label="Filter users by account type" data-filter-for="users-table">
+        <button type="button" class="filter-chip is-on" data-filter="all" aria-pressed="true">All <span class="filter-count"><?= count($liveProfiles) ?></span></button>
+        <button type="button" class="filter-chip" data-filter="admin" aria-pressed="false">Admin <span class="filter-count"><?= $typeCount['admin'] ?></span></button>
+        <button type="button" class="filter-chip" data-filter="staff" aria-pressed="false">Staff / Employee <span class="filter-count"><?= $typeCount['staff'] ?></span></button>
+        <button type="button" class="filter-chip" data-filter="growth_partner" aria-pressed="false">Growth Partner <span class="filter-count"><?= $typeCount['growth_partner'] ?></span></button>
+        <button type="button" class="filter-chip" data-filter="client" aria-pressed="false">Client <span class="filter-count"><?= $typeCount['client'] ?></span></button>
+      </div>
+      <p class="filter-empty hint" id="users-table-empty" hidden>No accounts of this type yet.</p>
+
+      <div class="table-scroll" tabindex="0" role="region" aria-label="All users"><table id="users-table">
         <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Lifecycle</th><th>Code</th><th>Actions</th></tr></thead>
         <tbody>
-        <?php foreach ($liveProfiles as $p): ?>
-          <tr>
+        <?php foreach ($liveProfiles as $p):
+          $linkedRole = ($byId[$p['linked_profile_id'] ?? ''] ?? [])['role'] ?? null;
+          $teamGp     = is_team_partner($p, $linkedRole ?? '');
+          $linkedTo   = $linkedName($p);
+        ?>
+          <tr data-types="<?= e(implode(' ', $typesOf($p))) ?>">
             <td><strong><?= e($p['full_name']) ?></strong></td>
             <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
-            <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span><?= in_array($p['role'], ['client', 'admin'], true) ? '<br><span class="hint">Growth Partner · ' . e(tier_label($p['affiliate_tier'] ?? null)) . '</span>' : '' ?></td>
-            <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
-            <td style="font-size:12px"><?php if ($p['role'] === 'admin'): ?>Permanent<br><span class="hint">partner never expires</span><?php elseif ($p['role'] !== 'client'): ?>Permanent<?php elseif (!$p['lifecycle_expires_at']): ?>Client permanent<br><span class="hint">no partner plan</span><?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?><?php endif; ?></td>
-            <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
+            <td>
+              <span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span>
+              <?php if ($p['role'] === 'growth_partner'): ?>
+                <br><span class="hint"><?= e(tier_label($p['affiliate_tier'] ?? null)) ?><?= $linkedTo ? ' · linked to ' . e($linkedTo) : '' ?></span>
+              <?php elseif ($p['role'] === 'client' && !empty($p['affiliate_tier'])): ?>
+                <br><span class="hint">+ Growth Partner · <?= e(tier_label($p['affiliate_tier'])) ?></span>
+              <?php elseif ($linkedTo): ?>
+                <br><span class="hint">Partner account: <?= e($linkedTo) ?></span>
+              <?php endif; ?>
+            </td>
+            <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p, $teamGp) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
+            <td style="font-size:12px">
+              <?php if (in_array($p['role'], ['admin', 'staff'], true)): ?>Permanent
+              <?php elseif ($p['role'] === 'growth_partner' && tier_unlimited($p)): ?>Lifetime<br><span class="hint">Unlimited · never expires</span>
+              <?php elseif (empty($p['lifecycle_expires_at'])): ?><?= $p['role'] === 'growth_partner' ? 'No plan yet' : 'Client permanent' ?>
+              <?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?>
+              <?php endif; ?>
+            </td>
+            <td style="font-size:11px"><?= e($p['referral_code'] ?? '') ?: '<span class="hint">—</span>' ?></td>
             <td>
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 <a class="btn btn-sm" href="/dashboard-admin.php?edit_user=<?= e($p['id']) ?>#users">Edit</a>

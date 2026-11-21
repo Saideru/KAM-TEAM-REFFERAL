@@ -14,6 +14,7 @@
  *   tableHints      "scroll for more" affordance on wide tables
  *   copyButtons     copy-to-clipboard with feedback
  *   adminPanels     admin sidebar tabs and their panels
+ *   tableFilters    filter chips above a table (e.g. users by account type)
  *   statusFields    work tracker: fields that depend on the chosen status
  *   idleWatch       5-minute inactivity sign-out (all signed-in pages)
  */
@@ -277,6 +278,48 @@
   }
 
   /* ------------------------------------------------------------------
+   * Filter chips: <div class="filter-bar" data-filter-for="TABLE_ID">
+   * with <button data-filter="type">, rows carry data-types="a b".
+   * The chosen filter is kept in the URL (?type=) so a reload or a
+   * shared link opens on the same view.
+   * ---------------------------------------------------------------- */
+  function tableFilters() {
+    $$('.filter-bar[data-filter-for]').forEach(function (bar) {
+      var table = document.getElementById(bar.dataset.filterFor);
+      if (!table) return;
+      var chips = $$('[data-filter]', bar);
+      var rows  = $$('tbody tr', table);
+      var empty = document.getElementById(bar.dataset.filterFor + '-empty');
+
+      function apply(type) {
+        var shown = 0;
+        rows.forEach(function (tr) {
+          var match = type === 'all' || (' ' + (tr.dataset.types || '') + ' ').indexOf(' ' + type + ' ') !== -1;
+          tr.hidden = !match;
+          if (match) shown++;
+        });
+        chips.forEach(function (c) {
+          var on = c.dataset.filter === type;
+          c.classList.toggle('is-on', on);
+          c.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        if (empty) empty.hidden = shown > 0;
+        try {
+          var url = new URL(location.href);
+          if (type === 'all') url.searchParams.delete('type'); else url.searchParams.set('type', type);
+          history.replaceState(null, '', url.pathname + url.search + location.hash);
+        } catch (err) { /* old browser: filter still works, just not remembered */ }
+      }
+
+      chips.forEach(function (c) { on(c, 'click', function () { apply(c.dataset.filter); }); });
+
+      var start = new URLSearchParams(location.search).get('type');
+      var known = chips.some(function (c) { return c.dataset.filter === start; });
+      apply(known ? start : 'all');
+    });
+  }
+
+  /* ------------------------------------------------------------------
    * Work tracker: show only the fields the chosen status needs
    * ---------------------------------------------------------------- */
   function statusFields() {
@@ -410,7 +453,8 @@
   /* ---------------------------------------------------------------- */
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
-     countdowns, tableHints, copyButtons, idleWatch].forEach(function (mod) {
+     countdowns, tableHints, copyButtons, adminPanels, tableFilters,
+     statusFields, idleWatch].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });
   }
