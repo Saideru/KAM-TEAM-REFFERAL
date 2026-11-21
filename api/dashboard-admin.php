@@ -634,6 +634,8 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     'bell'       => notif_bell($token, $profile, $csrf),
     'role'       => 'Admin',
     'role_class' => 'admin',
+    // Soft toggle → this admin's own Growth Partner account (linked row).
+    'toggle'     => !empty($profile['linked_profile_id']) ? ['to' => $profile['linked_profile_id'], 'on' => false] : null,
 ]) ?>
 
 <div class="shell">

@@ -115,6 +115,25 @@ function ui_topbar(array $o): string
             . $note . '<span aria-hidden="true">→</span></a>';
     }
 
+    // Soft toggle between an admin and its own linked Growth Partner
+    // account (profiles.linked_profile_id, both ways). It POSTs to the
+    // session switcher, which checks the two IDs really are linked.
+    //   'toggle' => ['to' => <linked id>, 'on' => bool (GP side showing)]
+    if (!empty($o['toggle']['to'])) {
+        $t  = $o['toggle'];
+        $on = !empty($t['on']);
+        $right .= '<form class="acct-toggle-form" method="post" action="/notifications.php">'
+            . '<input type="hidden" name="csrf" value="' . e($o['csrf']) . '">'
+            . '<input type="hidden" name="action" value="switch">'
+            . '<input type="hidden" name="to" value="' . e((string) $t['to']) . '">'
+            . '<button type="submit" class="acct-toggle' . ($on ? ' is-on' : '') . '" role="switch" aria-checked="' . ($on ? 'true' : 'false') . '"'
+            . ' title="' . ($on ? 'Back to your Admin account' : 'Open your own Growth Partner account') . '">'
+            . '<span class="acct-toggle-side' . ($on ? '' : ' is-cur') . '">' . e($t['off_label'] ?? 'Admin') . '</span>'
+            . '<span class="acct-toggle-track" aria-hidden="true"><span class="acct-toggle-knob"></span></span>'
+            . '<span class="acct-toggle-side' . ($on ? ' is-cur' : '') . '">' . e($t['on_label'] ?? 'Growth Partner') . '</span>'
+            . '</button></form>';
+    }
+
     foreach ($o['links'] ?? [] as $link) {
         if (!empty($link['post'])) {
             // POST form styled as the same small button. Used for things

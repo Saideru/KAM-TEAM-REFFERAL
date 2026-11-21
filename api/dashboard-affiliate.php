@@ -177,15 +177,9 @@ if (!$switchedFromAdmin && $profile['role'] === 'client' && !affiliate_only($pro
 }
 
 $topLinks = [];
-if ($switchedFromAdmin) {
-    // "Back to Admin" switches the session back to the base user.
-    $topLinks[] = [
-        'label'  => '← Back to Admin',
-        'href'   => '/notifications.php',
-        'post'   => true,
-        'params' => ['action' => 'switch', 'to' => session_base_user_id()],
-    ];
-} elseif ($isAdmin) {
+// Switched in from Admin: the same soft toggle (now on) leads back.
+$topToggle = $switchedFromAdmin ? ['to' => session_base_user_id(), 'on' => true] : null;
+if (!$switchedFromAdmin && $isAdmin) {
     // Legacy path: an admin who never had their referral slot split off
     // still lives on the admin row. Direct link back is fine.
     $topLinks[] = ['label' => '← Admin dashboard', 'href' => '/dashboard-admin.php'];
@@ -199,6 +193,7 @@ if ($switchedFromAdmin) {
     'role_class' => $switchedFromAdmin || $isAdmin ? 'admin' : 'affiliate',
     'links'      => $topLinks,
     'switch'     => $topSwitch,
+    'toggle'     => $topToggle,
 ]) ?>
 
 <div class="shell">
