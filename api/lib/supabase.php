@@ -226,9 +226,15 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
     }
 
     // One account, both sides: a permanent Client that buys service
-    // packages, and a Growth Partner that refers clients. The Growth
-    // Partner plan (Basic/Standard) is chosen after an admin approves.
+    // packages, and a Growth Partner that refers clients. account_mode
+    // decides which side is open after approval:
+    //   'client'    - Client dashboard is primary; Growth Partner activates
+    //                 when the member picks a Basic/Standard plan.
+    //   'affiliate' - Only the Growth Partner side is open; the Client
+    //                 dashboard stays dormant until the member clicks
+    //                 "Activate Client account" on /dashboard-affiliate.php.
     $role = 'client';
+    $mode = ($meta['account_mode'] ?? 'client') === 'affiliate' ? 'affiliate' : 'client';
 
     // Every new account waits behind the approval wall until an admin accepts
     // it; the lifecycle clock starts at approval (see approve_application()).
@@ -241,6 +247,7 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         'company'       => $meta['company'] ?: null,
         'referred_by'   => $referrer,
         'role'          => $role,
+        'account_mode'  => $mode,
         'status'        => 'pending',
         'business_nature'    => $meta['business_nature'] ?? null,
         'business_struggles' => array_values($meta['business_struggles'] ?? []),
@@ -378,6 +385,31 @@ function is_member(?array $profile): bool
     return ($profile['role'] ?? '') === 'client';
 }
 
+// 'client'    - Client side is primary (the dashboards show both sides).
+// 'affiliate' - Growth Partner only; the Client dashboard is dormant until
+//               the member opts in from /dashboard-affiliate.php.
+// Pre-migration rows and team accounts return 'client'.
+function account_mode(?array $profile): string
+{
+    return ($profile['account_mode'] ?? 'client') === 'affiliate' ? 'affiliate' : 'client';
+}
+
+function affiliate_only(?array $profile): bool
+{
+    return is_member($profile) && account_mode($profile) === 'affiliate';
+}
+
+// Member clicks "Activate Client account" on their partner dashboard.
+// Flips the mode so the Client side opens, nothing else changes.
+function activate_client_side(string $token, string $userId): ?string
+{
+    $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId),
+        ['account_mode' => 'client'], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return 'Could not activate the Client account. Please try again.';
+    audit_log($token, 'client_side_activated', 'profile', $userId, 'Member activated their Client account');
+    return null;
+}
+
 // Admins and staff are KAM TEAM's own people: registered by an admin, never
 // behind the approval wall and not bound by the affiliate program terms.
 function is_team(?array $profile): bool
@@ -410,7 +442,12 @@ function redirect_by_role(?string $welcome = null): void
         exit;
     }
 
-    header('Location: ' . dashboard_url($profile['role'] ?? 'client') . ($welcome ? '?welcome=1' : ''));
+    // Affiliate-only members land on the partner dashboard, not the Client one.
+    $url = affiliate_only($profile)
+        ? '/dashboard-affiliate.php'
+        : dashboard_url($profile['role'] ?? 'client');
+
+    header('Location: ' . $url . ($welcome ? '?welcome=1' : ''));
     exit;
 }
 

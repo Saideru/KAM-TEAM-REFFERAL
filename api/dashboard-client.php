@@ -9,6 +9,9 @@ require_once __DIR__ . '/lib/ui.php';
 // delivered reports. The Growth Partner side lives on /dashboard-affiliate.php.
 ['token' => $token, 'profile' => $profile] = require_role('client');
 if (isset($_GET['view'])) { header('Location: /dashboard-affiliate.php'); exit; }
+// Affiliate-only members haven't opened the Client side yet. Send them to
+// the partner dashboard, where "Activate Client account" lives.
+if (affiliate_only($profile)) { header('Location: /dashboard-affiliate.php'); exit; }
 $userId = $profile['id'];
 $errors = [];
 $notice = flash();

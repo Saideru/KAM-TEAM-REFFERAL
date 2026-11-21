@@ -69,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 audit_log($token, 'plan_activated', 'profile', $userId, 'Basic plan started — ' . $pkg['name']);
                 notify($token, 'Basic Growth Partner plan active', 'Your 3-month Basic term has started. Refer a client to add 3 more months, or upgrade to Standard any time.', $userId);
                 flash('success', 'Basic plan active — your 3-month term starts today.');
-                header('Location: /dashboard-client.php?welcome=1'); exit;
+                header('Location: ' . (affiliate_only($profile) ? '/dashboard-affiliate.php?welcome=1' : '/dashboard-client.php?welcome=1')); exit;
             }
             $errors[] = db_error_message($err) ?: 'Could not start your Basic plan. Please try again.';
         } else {
@@ -91,10 +91,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                     notify($token, 'Payment to verify', $profile['full_name'] . ' paid $' . number_format((float) $pkg['price'], 2) . ' (' . $offer($pkg) . ') — ref ' . $refNo . '.', null, 'admin', '/dashboard-admin.php#approvals');
                     flash('success', 'Payment submitted. An admin will verify it and start your Standard term.');
                     // First plan: the dashboard opens now, the term starts on approval.
-                    header('Location: ' . ($tier ? '/dashboard-affiliate.php' : '/dashboard-client.php')); exit;
+                    header('Location: ' . ($tier || affiliate_only($profile) ? '/dashboard-affiliate.php' : '/dashboard-client.php')); exit;
                 }
                 $errors[] = $res['status'] === 409 ? 'You already have a payment waiting for admin approval.' : 'Could not submit your payment. Please try again.';
             }
+        }
+    }
+
+    // "Activate Client account" — flips an affiliate-only member into a
+    // dual-side account. Reversible from the admin dashboard if needed.
+    if ($act === 'activate_client' && affiliate_only($profile)) {
+        $err = activate_client_side($token, $userId);
+        if ($err) {
+            $errors[] = $err;
+        } else {
+            flash('success', 'Client account activated. You can now buy KAM Team services.');
+            notify($token, 'Client account activated', 'Your Client dashboard is now open — browse the service packages when you\'re ready.', $userId);
+            header('Location: /dashboard-client.php?welcome=1'); exit;
         }
     }
 
@@ -131,13 +144,22 @@ $gated      = !$tier && !$pending;
 ]) ?>
 
 <div class="shell">
+<?php
+// Sidebar items change with the member's state:
+//   gated          - new sign-up, hasn't picked a plan yet.
+//   affiliate-only - Client dashboard is dormant; show "Activate" instead.
+//   dual-side      - the full nav with both accounts.
+$sideBack = $isAdmin
+    ? ['label' => '← Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']
+    : (affiliate_only($profile)
+        ? ['label' => 'Activate Client account', 'href' => '#activate-client', 'icon' => 'brief']
+        : ['label' => '← Client account',        'href' => '/dashboard-client.php', 'icon' => 'brief']);
+?>
 <?= app_sidebar($gated ? [
     ['label' => 'Choose your plan', 'href' => '#plans',   'icon' => 'box'],
     ['label' => 'Verify ID',        'href' => '/kyc.php', 'icon' => 'id'],
 ] : [
-    $isAdmin
-        ? ['label' => '← Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']
-        : ['label' => '← Client account',  'href' => '/dashboard-client.php', 'icon' => 'brief'],
+    $sideBack,
     ['label' => 'Partner plan',   'href' => '#plans',    'icon' => 'box'],
     ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
     ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
@@ -146,7 +168,7 @@ $gated      = !$tier && !$pending;
     ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
 ], 'Growth Partner') ?>
 <main class="wrap" id="main" tabindex="-1">
-  <?php if (!$gated): ?>
+  <?php if (!$gated && ($isAdmin || !affiliate_only($profile))): ?>
   <nav class="account-switch" aria-label="Account">
     <a href="<?= $isAdmin ? '/dashboard-admin.php' : '/dashboard-client.php' ?>"><?= $isAdmin ? 'Admin dashboard' : 'Client account' ?></a>
     <a href="/dashboard-affiliate.php" class="on">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?></small></a>
@@ -158,11 +180,28 @@ $gated      = !$tier && !$pending;
         $tier ? 'Refer clients, earn commission.' : 'Choose your plan.'
   ) ?>
   <?php if ($gated): ?>
-    <div class="alert alert-warn" style="margin-bottom:12px"><strong>One last step.</strong> Your account is approved. Pick your Growth Partner plan below — <strong>Basic</strong> starts free right away, <strong>Standard</strong> costs US$100 — and your dashboard opens. Your Client account is permanent either way; only the Growth Partner side carries a term.</div>
+    <?php $onlyAffiliate = affiliate_only($profile); ?>
+    <div class="alert alert-warn" style="margin-bottom:12px"><strong>One last step.</strong> Your account is approved. Pick your Growth Partner plan below — <strong>Basic</strong> starts free right away, <strong>Standard</strong> costs US$100 — and your dashboard opens.
+      <?= $onlyAffiliate
+          ? 'You signed up as a Growth Partner only; you can activate a Client account any time once your plan is set.'
+          : 'Your Client account is permanent either way; only the Growth Partner side carries a term.' ?></div>
   <?php endif; ?>
 
   <?= ui_alerts($notice, $errors) ?>
   <?= kyc_banner($profile) ?>
+
+  <?php if (!$gated && affiliate_only($profile)): ?>
+    <section class="card activate-card" id="activate-client" style="margin-bottom:16px">
+      <span class="label"><span class="dot" style="background:var(--orange)"></span>Client account // dormant</span>
+      <h2 style="margin:6px 0 4px">Also want KAM Team services?</h2>
+      <p class="hint" style="margin:0 0 12px">You signed up as a Growth Partner only. Activate the Client side any time to browse service packages and pay the 50% advance deposit. Your Growth Partner side keeps running as-is.</p>
+      <form method="post" style="margin:0">
+        <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+        <input type="hidden" name="action" value="activate_client">
+        <button class="btn btn-solid btn-sm" type="submit">Activate Client account <span aria-hidden="true">→</span></button>
+      </form>
+    </section>
+  <?php endif; ?>
 
   <?php if ($state === 'grace'): ?>
     <div class="alert alert-error"><strong>Your <?= e(tier_label($tier)) ?> term expired on <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>.</strong>

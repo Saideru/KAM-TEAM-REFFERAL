@@ -71,7 +71,7 @@ function ui_head(array $o): string
         . ($o['head'] ?? '')
         . "</head>\n"
         . '<body' . ($body !== '' ? ' class="' . e($body) . '"' : '') . $idleAttr . ">\n"
-        . '<a class="skip-link" href="#main">Skip to main content</a>' . "\n";
+        ;
 
     if (!empty($o['idle']) && !empty($o['csrf'])) {
         $html .= ui_idle_watchdog($o['csrf']);

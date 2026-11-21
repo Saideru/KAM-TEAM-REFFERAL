@@ -634,6 +634,33 @@ a.notif-item:hover { background: var(--surface-2); }
 }
 section[id], div[id="overview"] { scroll-margin-top: 16px; }
 
+/* ---------- Account type picker (registration) ---------- */
+.acct-pick { margin-bottom: 16px; }
+.acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 480px) { .acct-grid { grid-template-columns: 1fr; } }
+.acct-tile {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--border-light); border-radius: var(--radius);
+  background: var(--surface-2); cursor: pointer;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.acct-tile:hover { border-color: var(--rust); }
+.acct-tile input {
+  margin: 4px 0 0; accent-color: var(--rust);
+  width: 16px; height: 16px; flex: none;
+}
+.acct-tile.is-on { border-color: var(--rust); background: var(--orange-dim); }
+.acct-tile:focus-within { outline: 2px solid var(--rust); outline-offset: 2px; }
+.acct-body { display: block; min-width: 0; }
+.acct-body .label { display: block; margin-bottom: 2px; }
+.acct-body strong { display: block; font-size: 14px; color: var(--text); margin-bottom: 4px; }
+.acct-body p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-muted); }
+
+/* ---------- Activate client card (affiliate-only members) ---------- */
+.activate-card { border: 1px dashed var(--border-light); background: var(--surface-2); }
+.activate-card h2 { font-family: var(--font-head); font-size: 18px; }
+
 /* ---------- Business profile ---------- */
 .biz-fieldset { border: 1px solid var(--border-light); border-radius: var(--radius); padding: 14px; margin: 0 0 16px; }
 .biz-fieldset legend { padding: 0 6px; font-size: 13px; color: var(--text-muted); }

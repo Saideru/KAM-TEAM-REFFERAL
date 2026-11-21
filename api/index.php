@@ -10,7 +10,7 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => []];
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => [], 'account_mode' => 'client'];
 $notice = flash();
 
 // Fallback copy when the idle watchdog sent the visitor here and the flash
@@ -55,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $old['phone']     = trim((string) ($_POST['phone'] ?? ''));
         $old['company']   = trim((string) ($_POST['company'] ?? ''));
         $confirm          = (string) ($_POST['password_confirm'] ?? '');
+        $old['account_mode']       = ($_POST['account_mode'] ?? '') === 'affiliate' ? 'affiliate' : 'client';
         $old['business_nature']    = in_array($_POST['business_nature'] ?? '', BUSINESS_NATURES, true) ? $_POST['business_nature'] : '';
         $old['business_struggles'] = array_values(array_intersect(array_keys(BUSINESS_STRUGGLES), (array) ($_POST['business_struggles'] ?? [])));
         $old['business_notes']     = mb_substr(trim((string) ($_POST['business_notes'] ?? '')), 0, 1000);
@@ -81,6 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'business_struggles' => $old['business_struggles'],
                 'business_notes'     => $old['business_notes'] ?: null,
                 'terms'              => $old['terms'],
+                'account_mode'       => $old['account_mode'],
             ]);
 
             if ($res['error']) {
@@ -112,7 +114,7 @@ $csrf = csrf_token();
       <p class="lead">Join the KAM Growth Partnership Program. Buy KAM Team services as a Client, refer clients as a Growth Partner, and manage both from one dashboard.</p>
 
       <ol class="steps">
-        <li><span class="label" style="color:var(--orange)">01 //</span><span>Register once — you get a <strong style="color:var(--white)">Client</strong> account and a <strong style="color:var(--orange)">Growth Partner</strong> account.</span></li>
+        <li><span class="label" style="color:var(--orange)">01 //</span><span>Register as a <strong style="color:var(--white)">Client</strong>, a <strong style="color:var(--orange)">Growth Partner</strong>, or both — your call, any time.</span></li>
         <li><span class="label" style="color:var(--orange)">02 //</span><span>Refer clients. You earn 10% of each client's 50% advance deposit.</span></li>
         <li><span class="label" style="color:var(--orange)">03 //</span><span>Track commissions, lifecycle and payouts from your dashboard.</span></li>
       </ol>
@@ -166,7 +168,7 @@ $csrf = csrf_token();
       <div id="panel-register" role="tabpanel" <?= $mode === 'register' ? '' : 'hidden' ?>>
         <span class="label kicker">02 // Registration</span>
         <h2>Join KAM Team.</h2>
-        <p class="sub">One account, both sides: a permanent <strong>Client</strong> account for KAM Team services, and a <strong>Growth Partner</strong> account for referring clients. You pick your Growth Partner plan once an admin approves you.</p>
+        <p class="sub">Pick the account that fits you now — you can add the other side any time.</p>
 
         <?php if ($ref !== ''): ?>
           <div class="ref-badge"><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
@@ -175,6 +177,29 @@ $csrf = csrf_token();
         <form method="post" action="/index.php" novalidate>
           <input type="hidden" name="action" value="register">
           <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+
+          <fieldset class="biz-fieldset acct-pick" aria-describedby="acct-pick-help">
+            <legend><span class="label kicker">What are you here for?</span></legend>
+            <div class="acct-grid">
+              <label class="acct-tile<?= $old['account_mode'] === 'client' ? ' is-on' : '' ?>">
+                <input type="radio" name="account_mode" value="client" <?= $old['account_mode'] !== 'affiliate' ? 'checked' : '' ?>>
+                <div class="acct-body">
+                  <span class="label" style="color:var(--rust)">Client</span>
+                  <strong>I want KAM Team services</strong>
+                  <p>Buy service packages (50% advance deposit to start). You also get a <strong>Growth Partner</strong> account that activates when you pick a Basic or Standard plan.</p>
+                </div>
+              </label>
+              <label class="acct-tile<?= $old['account_mode'] === 'affiliate' ? ' is-on' : '' ?>">
+                <input type="radio" name="account_mode" value="affiliate" <?= $old['account_mode'] === 'affiliate' ? 'checked' : '' ?>>
+                <div class="acct-body">
+                  <span class="label" style="color:var(--rust)">Growth Partner only</span>
+                  <strong>I want to refer clients</strong>
+                  <p>Only a <strong>Growth Partner</strong> account is created. You can activate a Client account later from your partner dashboard whenever you need KAM Team services.</p>
+                </div>
+              </label>
+            </div>
+            <p id="acct-pick-help" class="hint" style="margin:8px 2px 0">Admin approves every sign-up before the dashboard opens.</p>
+          </fieldset>
 
           <div class="field"><label for="reg-name">Full name</label><input id="reg-name" name="full_name" type="text" autocomplete="name" required value="<?= e($old['full_name']) ?>" placeholder="John Doe"></div>
           <div class="field"><label for="reg-username">Username</label><input id="reg-username" name="username" type="text" autocomplete="username" required pattern="[A-Za-z0-9_]{3,20}" value="<?= e($mode === 'register' ? $old['username'] : '') ?>" placeholder="3-20 letters, numbers or _"></div>
@@ -229,4 +254,41 @@ $csrf = csrf_token();
   </section>
 </main>
 
+<script>
+// Fallback tab switcher: runs inline so the Register tab and the "Create
+// account" link work even if /assets/js/app.js is still being cached, is
+// blocked, or 404s. app.js's authTabs does the same thing on top of this.
+(function () {
+  var login = document.getElementById('panel-login');
+  var reg   = document.getElementById('panel-register');
+  if (!login || !reg) return;
+  function show(mode) {
+    login.hidden = mode !== 'login';
+    reg.hidden   = mode !== 'register';
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
+      t.setAttribute('aria-selected', t.dataset.mode === mode ? 'true' : 'false');
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-mode]'), function (el) {
+    el.addEventListener('click', function () { show(el.dataset.mode); });
+  });
+  // Highlight the selected account-type tile.
+  Array.prototype.forEach.call(document.querySelectorAll('.acct-tile input'), function (radio) {
+    radio.addEventListener('change', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('.acct-tile'), function (tile) {
+        tile.classList.toggle('is-on', tile.contains(document.querySelector('.acct-tile input:checked')));
+      });
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.pw-toggle'), function (btn) {
+    btn.addEventListener('click', function () {
+      var input = btn.parentElement.querySelector('input');
+      if (!input) return;
+      var visible = input.type === 'text';
+      input.type = visible ? 'password' : 'text';
+      btn.textContent = visible ? 'Show' : 'Hide';
+    });
+  });
+})();
+</script>
 <?= ui_foot() ?>
