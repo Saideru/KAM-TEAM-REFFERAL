@@ -3,6 +3,7 @@ require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/work.php';
+require_once __DIR__ . '/lib/payouts.php';
 
 // Client Work Documentation & Reporting (SOP-OPS-001) — admin & staff workspace.
 // Staff can do everything here except approve and deliver client reports.
@@ -10,6 +11,13 @@ require_once __DIR__ . '/lib/work.php';
 $isAdmin = $profile['role'] === 'admin';
 $errors = [];
 $notice = flash();
+
+// Payouts: staff and admins sort the batch here (admins also switch payouts on/off).
+if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], null);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_team_action($token, $profile))) {
+    if ($poRes[0] === null) { flash('success', $poRes[1]); header('Location: /work.php?view=payouts'); exit; }
+    $errors[] = $poRes[0];
+}
 $csrf   = csrf_token();
 $adminId = $profile['id'];
 
@@ -228,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 }
 
 // ------------------------------------------------------------------ views
-$view   = isset($_GET['task']) ? 'task' : (isset($_GET['report']) ? 'report' : (($_GET['view'] ?? '') === 'reports' ? 'reports' : 'tasks'));
+$view   = isset($_GET['task']) ? 'task' : (isset($_GET['report']) ? 'report' : (($_GET['view'] ?? '') === 'reports' ? 'reports' : (($_GET['view'] ?? '') === 'payouts' ? 'payouts' : 'tasks')));
 $fClient = $validClient($_GET['client'] ?? '');
 $fStatus = isset(TASK_STATUSES[$_GET['status'] ?? '']) ? $_GET['status'] : '';
 
@@ -280,8 +288,9 @@ if ($view === 'report') {
 <?= app_sidebar(array_merge($isAdmin ? [['label' => 'Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']] : [], [
     ['label' => 'Task tracker',    'href' => '/work.php',            'icon' => 'check'],
     ['label' => 'Client reports',  'href' => '/work.php?view=reports', 'icon' => 'log'],
+    ['label' => 'Payouts',         'href' => '/work.php?view=payouts', 'icon' => 'cash'],
     ['label' => 'Program docs →',  'href' => '/report.php?doc=components', 'icon' => 'brief'],
-]),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : '/work.php') ?>
+]),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : ($view === 'payouts' ? '/work.php?view=payouts' : '/work.php')) ?>
 <main class="wrap" id="main" tabindex="-1">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>
   <h1>Client work. <span class="accent">Traceable, verified, reported.</span></h1>
@@ -290,6 +299,10 @@ if ($view === 'report') {
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
   <?= $datalist ?>
+
+<?php if ($view === 'payouts'): ?>
+  <div data-live="work-payouts"><?= payout_queue_html($token, $profile, $csrf, '/work.php?receipt=') ?></div>
+<?php endif; ?>
 
 <?php if ($view === 'tasks'): ?>
   <section class="card" style="margin-bottom:12px">

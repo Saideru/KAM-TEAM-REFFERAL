@@ -2,6 +2,7 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
+require_once __DIR__ . '/lib/payouts.php';
 
 // The Growth Partner side of a member account: plan, term, referral code,
 // downline and earnings. It is also the plan chooser every approved member
@@ -22,6 +23,9 @@ $notice = flash();
 $csrf   = csrf_token();
 $state  = affiliate_state($profile);          // none | active | grace | terminated
 $tier   = $profile['affiliate_tier'] ?? null;
+
+// PDF receipt for one of this partner's commissions or payouts (or a sample).
+if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], $userId);
 
 // Growth Partner plans only — service packages are bought on the Client side.
 $pkgRes   = supabase_request('GET', '/rest/v1/packages?select=*&kind=eq.affiliate&active=eq.true&order=price.asc', null, $token);
@@ -115,6 +119,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         }
     }
 
+    if ($act === 'request_payout') {
+        $err = payout_request($token, $profile);
+        if (!$err) {
+            flash('success', 'Payout requested. It is sorted after the Thursday 11:59 AM PT cutoff — you will get a notification and a receipt once it is paid.');
+            header('Location: /dashboard-affiliate.php?view=payout'); exit;
+        }
+        $errors[] = $err;
+    }
+
     if ($act === 'cancel_request' && $pending) {
         $res = supabase_request('PATCH', '/rest/v1/transactions?status=eq.pending&id=eq.' . urlencode($pending['id']) . '&user_id=eq.' . urlencode($userId),
             ['status' => 'failed', 'notes' => 'Cancelled by user'], $token, ['Prefer: return=minimal']);
@@ -199,7 +212,7 @@ $pages = [
     'plan'     => ['label' => 'Partner plan',  'icon' => 'box',  'title' => 'Your partner plan'],
     'share'    => ['label' => 'Referral link', 'icon' => 'link', 'title' => 'Your referral code'],
     'clients'  => ['label' => 'Clients referred', 'icon' => 'users', 'title' => 'Clients referred'],
-    'earnings' => ['label' => 'Earnings',      'icon' => 'cash', 'title' => 'Earnings'],
+    'payout'   => ['label' => 'Payout',        'icon' => 'cash', 'title' => 'Payout / Earnings'],
     'network'  => ['label' => 'Your downline', 'icon' => 'tree', 'title' => 'Your downline'],
 ];
 if (!$isAdmin && !$switchedFromAdmin) $pages['verify']   = ['label' => 'Verify ID',               'icon' => 'id',    'title' => 'Verify your ID'];
@@ -207,6 +220,7 @@ if ($hasBusiness)                     $pages['business'] = ['label' => 'Your bus
 if (affiliate_only($profile))         $pages['activate'] = ['label' => 'Activate Client account', 'icon' => 'brief', 'title' => 'Client account'];
 
 $view = (string) ($_GET['view'] ?? 'overview');
+if ($view === 'earnings') $view = 'payout';   // old links
 if ($gated || !isset($pages[$view])) $view = $gated ? 'plan' : 'overview';
 $canRefer = !in_array($state, ['grace', 'terminated'], true);
 
@@ -368,8 +382,9 @@ foreach ($pages as $key => $pg) {
       <?= affiliate_account_html($token, $profile, $canRefer, ['share']) ?>
     <?php elseif ($view === 'clients'): ?>
       <?= clients_referred_html($token, $profile) ?>
-    <?php elseif ($view === 'earnings'): ?>
-      <?= affiliate_account_html($token, $profile, $canRefer, ['stats', 'earnings']) ?>
+    <?php elseif ($view === 'payout'): ?>
+      <?= affiliate_account_html($token, $profile, $canRefer, ['stats']) ?>
+      <?= payout_page_html($token, $profile, $csrf) ?>
     <?php elseif ($view === 'network'): ?>
       <?= affiliate_account_html($token, $profile, $canRefer, ['network']) ?>
     <?php elseif ($view === 'verify'): ?>

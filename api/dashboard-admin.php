@@ -2,6 +2,7 @@
 require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
+require_once __DIR__ . '/lib/payouts.php';
 
 ['token' => $token, 'profile' => $profile] = require_role('admin');
 $errors = [];
@@ -19,6 +20,15 @@ $back = fn(string $panel) => header('Location: /dashboard-admin.php#' . $panel);
 $svcStatusList    = ['active', 'paused', 'completed'];
 $serviceList      = ['S-01 Marketing', 'S-02 Virtual Assistance', 'S-03 Video Editing', 'S-04 Accounting', 'S-05 Call Center Support', 'S-06 Project Management', 'S-07 AI Implementation'];
 $txnStatusOptions = ['pending', 'completed', 'failed', 'reversed'];
+
+// PDF receipt for any commission or payout.
+if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], null);
+
+// Payouts: mark paid / reject, and the password-confirmed killswitch.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_team_action($token, $profile))) {
+    if ($poRes[0] === null) { flash('success', $poRes[1]); $back('payouts'); exit; }
+    $errors[] = $poRes[0];
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $act = $_POST['admin_action'] ?? '';
@@ -543,6 +553,7 @@ $allPkgs = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : []
 
 $txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,username,email,phone,role,business_nature,business_struggles),packages!transactions_package_id_fkey(name,tier,kind)&order=created_at.desc', null, $token);
 $allTxns = is_array($txnRes['body']) && !$txnRes['error'] ? $txnRes['body'] : [];
+$payoutPending = count(array_filter($allTxns, fn($t) => $t['type'] === 'payout' && $t['status'] === 'pending'));
 
 $csRes = supabase_request('GET', '/rest/v1/client_services?select=*,profiles!client_services_client_id_fkey(full_name,email)&order=started_at.desc', null, $token);
 $allCS = is_array($csRes['body']) && !$csRes['error'] ? $csRes['body'] : [];
@@ -634,6 +645,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     ['label' => 'Payment',      'panel' => 'payment',      'icon' => 'qr'],
     ['label' => 'Referral network', 'panel' => 'referrals', 'icon' => 'tree'],
     ['label' => 'Packages',     'panel' => 'packages',     'icon' => 'box'],
+    ['label' => 'Payouts',      'panel' => 'payouts',      'icon' => 'cash', 'count' => $payoutPending],
     ['label' => 'Transactions', 'panel' => 'transactions', 'icon' => 'cash'],
     ['label' => 'Services',     'panel' => 'services',     'icon' => 'tool'],
     ['label' => 'Notify',       'panel' => 'notify',       'icon' => 'bell'],
@@ -1137,6 +1149,10 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- TRANSACTIONS -->
+  <div id="panel-payouts" class="admin-panel" data-live="panel-payouts">
+    <?= payout_queue_html($token, $profile, $csrf, '/dashboard-admin.php?receipt=') ?>
+  </div>
+
   <div id="panel-transactions" class="admin-panel" data-live="panel-transactions">
     <div class="card"><h2>Transaction ledger</h2>
       <?php if (!$allTxns): ?><p class="empty">No transactions.</p>
