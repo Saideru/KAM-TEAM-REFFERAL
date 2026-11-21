@@ -295,7 +295,7 @@ main:focus { outline: none; }
 
 /* ---------- Topbar ---------- */
 .topbar { background: var(--surface); border-bottom: 1px solid var(--border); }
-.topbar-inner { max-width: 1200px; margin: 0 auto; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.topbar-inner { max-width: none; margin: 0; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .topbar .role-label { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px; }
 .topbar .role-label.admin { background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
 .topbar .role-label.client_basic { background: var(--green-dim); color: var(--green); border: 1px solid var(--border-light); }

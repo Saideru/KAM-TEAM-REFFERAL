@@ -399,6 +399,13 @@ function account_mode(?array $profile): string
     return ($profile['account_mode'] ?? 'client') === 'affiliate' ? 'affiliate' : 'client';
 }
 
+// A plain Client account: role client, no Growth Partner plan, not a
+// legacy partner-only row. It has no Growth Partner side at all.
+function is_client_only(?array $profile): bool
+{
+    return ($profile['role'] ?? '') === 'client' && empty($profile['affiliate_tier']) && account_mode($profile) !== 'affiliate';
+}
+
 function affiliate_only(?array $profile): bool
 {
     return is_member($profile) && account_mode($profile) === 'affiliate';
@@ -540,6 +547,10 @@ function require_role(string|array $allowed): array
 // waiting for an admin.
 function needs_plan(string $token, array $profile): bool
 {
+    // A Client account never picks a Growth Partner plan — it goes straight
+    // to the Client dashboard once approved. Only Growth Partner accounts
+    // (and legacy partner-only rows) pass through the plan chooser.
+    if (is_client_only($profile)) return false;
     if (!empty($profile['affiliate_tier'])) return false;
     return !plan_request_pending($token, $profile['id']);
 }

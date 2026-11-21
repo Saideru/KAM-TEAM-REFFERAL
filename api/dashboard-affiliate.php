@@ -24,6 +24,12 @@ $csrf   = csrf_token();
 $state  = affiliate_state($profile);          // none | active | grace | terminated
 $tier   = $profile['affiliate_tier'] ?? null;
 
+// A plain Client has no Growth Partner side — send them to their own
+// dashboard (unless a plan request they made earlier is still waiting).
+if (is_client_only($profile) && !plan_request_pending($token, $userId)) {
+    header('Location: /dashboard-client.php' . (isset($_GET['welcome']) ? '?welcome=1' : '')); exit;
+}
+
 // PDF receipt for one of this partner's commissions or payouts (or a sample).
 if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], $userId);
 
