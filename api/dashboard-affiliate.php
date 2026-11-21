@@ -197,6 +197,7 @@ $pages = [
     'overview' => ['label' => 'Overview',      'icon' => 'home', 'title' => 'Overview'],
     'plan'     => ['label' => 'Partner plan',  'icon' => 'box',  'title' => 'Your partner plan'],
     'share'    => ['label' => 'Referral link', 'icon' => 'link', 'title' => 'Your referral code'],
+    'clients'  => ['label' => 'Clients referred', 'icon' => 'users', 'title' => 'Clients referred'],
     'earnings' => ['label' => 'Earnings',      'icon' => 'cash', 'title' => 'Earnings'],
     'network'  => ['label' => 'Your downline', 'icon' => 'tree', 'title' => 'Your downline'],
 ];
@@ -353,6 +354,7 @@ foreach ($pages as $key => $pg) {
   <?php endif; ?>
 
   <?php if (!$gated): ?>
+    <div data-live="gp-<?= e($view) ?>">
     <?php if ($view === 'overview'): ?>
       <?= affiliate_account_html($token, $profile, $canRefer, ['stats']) ?>
       <nav class="quick-grid" aria-label="Growth Partner pages">
@@ -362,6 +364,8 @@ foreach ($pages as $key => $pg) {
       </nav>
     <?php elseif ($view === 'share'): ?>
       <?= affiliate_account_html($token, $profile, $canRefer, ['share']) ?>
+    <?php elseif ($view === 'clients'): ?>
+      <?= clients_referred_html($token, $profile) ?>
     <?php elseif ($view === 'earnings'): ?>
       <?= affiliate_account_html($token, $profile, $canRefer, ['stats', 'earnings']) ?>
     <?php elseif ($view === 'network'): ?>
@@ -371,6 +375,7 @@ foreach ($pages as $key => $pg) {
     <?php elseif ($view === 'business'): ?>
       <?= business_card($token, $profile, $csrf) ?>
     <?php endif; ?>
+    </div>
   <?php endif; ?>
 </main>
 </div>

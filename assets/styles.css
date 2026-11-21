@@ -1053,3 +1053,12 @@ body.idle-warning { overflow: hidden; }
 .tree-dlg-head h3 { margin: 4px 0 0; font-size: 18px; }
 .tree-dlg-head form { margin: 0; }
 .tree-dlg-body { padding: 16px 18px; overflow: auto; }
+
+/* Live counters toggle with the hidden attribute. */
+.tab-count[hidden] { display: none; }
+
+/* ---------- Growth Partner: how a client uses your code ---------- */
+.how-refer { margin-top: 16px; padding: 14px 16px; border: 1px dashed var(--border-light); border-radius: var(--radius); background: var(--surface-2); }
+.how-refer h3 { margin: 0 0 8px; font-size: 14px; }
+.how-refer ol { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--text-muted); }
+.how-refer a { color: var(--rust); }

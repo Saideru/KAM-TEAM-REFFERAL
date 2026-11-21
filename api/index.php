@@ -15,9 +15,11 @@ $refSuffix = preg_replace('/^KT-?/', '', strtoupper(preg_replace('/[^A-Za-z0-9-]
 $refSuffix = str_replace('-', '', $refSuffix);
 $ref    = $refSuffix === '' ? '' : 'KT-' . $refSuffix;
 $errors = [];
-// A visitor landing with ?ref=… was pointed here by a Growth Partner, so
-// pre-select the Growth Partner tile — the kind of account that needs a code.
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => [], 'account_mode' => $ref !== '' ? 'affiliate' : 'client'];
+// A visitor landing with ?ref=… was pointed here by a Growth Partner. The
+// Growth Partner tile is pre-selected, unless the link says as=client (the
+// client sign-up link on the partner's Referral link page).
+$refAs  = ($_GET['as'] ?? '') === 'client' ? 'client' : 'affiliate';
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => [], 'account_mode' => $ref !== '' ? $refAs : 'client'];
 $notice = flash();
 
 // Fallback copy when the idle watchdog sent the visitor here and the flash
@@ -80,14 +82,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $old['business_notes']     = '';
         }
 
-        // Growth Partners must sign up through another partner's link, so
-        // every new partner joins an existing downline (Manual §4). Clients
-        // don't carry a code — the field is hidden and ignored for them.
+        // Growth Partners must sign up through another partner's code, so
+        // every new partner joins an existing downline (Manual §4). For a
+        // Client the code is optional: when given, the Client is credited to
+        // the Growth Partner who referred them (that's what earns commission).
         if ($old['account_mode'] === 'affiliate' && $ref === '') {
             $errors[] = 'Enter the referral code of the Growth Partner who invited you — it is required for a Growth Partner account.';
-        }
-        if ($old['account_mode'] === 'client') {
-            $ref = '';
         }
 
         if ($old['full_name'] === '')                     $errors[] = 'Enter your full name.';
@@ -198,7 +198,7 @@ $csrf = csrf_token();
         <p class="sub">Pick the account that fits you now — you can add the other side any time.</p>
 
         <?php if ($ref !== ''): ?>
-          <div class="ref-badge" id="ref-badge"<?= $old['account_mode'] === 'affiliate' ? '' : ' hidden' ?>><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
+          <div class="ref-badge" id="ref-badge"><span class="dot"></span>Ref: <strong><?= e($ref) ?></strong></div>
         <?php endif; ?>
 
         <form method="post" action="/index.php" novalidate>
@@ -265,14 +265,13 @@ $csrf = csrf_token();
           </fieldset>
 
           <?php
-            // Growth Partners must enter the code of the partner that
-            // referred them (every new partner joins an existing downline).
-            // The field stays hidden for Clients — they can be invited but
-            // the program does not credit a Client to anyone.
+            // Shown for both account types: required for a Growth Partner
+            // (every partner joins a downline), optional for a Client (credits
+            // the Client to the Growth Partner who referred them).
             $refRequired = $old['account_mode'] === 'affiliate';
           ?>
-          <div class="field ref-field" id="ref-field"<?= $refRequired ? '' : ' hidden' ?>>
-            <label for="reg-ref">Referral code <span class="ref-req" aria-hidden="true">(required)</span></label>
+          <div class="field ref-field" id="ref-field">
+            <label for="reg-ref">Referral code <span class="ref-req" id="ref-req" aria-hidden="true"><?= $refRequired ? '(required)' : '(optional)' ?></span></label>
             <div class="ref-wrap">
               <span class="ref-prefix" aria-hidden="true">KT-</span>
               <input id="reg-ref" name="ref" type="text" maxlength="9"
@@ -281,7 +280,7 @@ $csrf = csrf_token();
                      pattern="(KT-?|kt-?)?[A-Za-z0-9]{3,9}" title="The characters after KT-, e.g. 000001"
                      <?= $refRequired ? 'required aria-required="true"' : '' ?>>
             </div>
-            <small id="ref-hint" style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Type only the characters after KT- (e.g. 000001). Enter the code of the Growth Partner who invited you — this credits every referral you make to their network.</small>
+            <small id="ref-hint" style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Type only the characters after KT- (e.g. 000001). <span id="ref-why"><?= $refRequired ? 'Enter the code of the Growth Partner who invited you — you join their network.' : 'Were you referred by a Growth Partner? Enter their code so they are credited. Leave it blank if not.' ?></span></small>
           </div>
 
           <?= terms_checklist($old['terms'], '04 // Program terms', 'reg-submit') ?>
@@ -336,17 +335,23 @@ $csrf = csrf_token();
       tile.classList.toggle('is-on', tile.contains(checked));
     });
     if (refField && refInput) {
-      refField.hidden = !affiliate;
-      refInput.disabled = !affiliate;
-      if (affiliate) refInput.setAttribute('required', '');
-      else refInput.removeAttribute('required');
+      refField.hidden = false;
+      refInput.disabled = false;
+      if (affiliate) { refInput.setAttribute('required', ''); refInput.setAttribute('aria-required', 'true'); }
+      else { refInput.removeAttribute('required'); refInput.removeAttribute('aria-required'); }
+      var req = document.getElementById('ref-req');
+      if (req) req.textContent = affiliate ? '(required)' : '(optional)';
+      var why = document.getElementById('ref-why');
+      if (why) why.textContent = affiliate
+        ? 'Enter the code of the Growth Partner who invited you — you join their network.'
+        : 'Were you referred by a Growth Partner? Enter their code so they are credited. Leave it blank if not.';
     }
     if (bizField) {
       bizField.hidden = affiliate;
       bizField.disabled = affiliate;
     }
     var badge = document.getElementById('ref-badge');
-    if (badge) badge.hidden = !affiliate;
+    if (badge) badge.hidden = false;
   }
   Array.prototype.forEach.call(document.querySelectorAll('.acct-tile input'), function (radio) {
     radio.addEventListener('change', syncAcctMode);

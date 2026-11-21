@@ -285,13 +285,17 @@
    * The chosen filter is kept in the URL (?type=) so a reload or a
    * shared link opens on the same view.
    * ---------------------------------------------------------------- */
+  // Delegated (one listener on document) and re-applied after a live
+  // refresh, so the chips keep working when liveRefresh swaps the table in.
   function tableFilters() {
-    $$('.filter-bar[data-filter-for]').forEach(function (bar) {
+    function applyBar(bar, type) {
       var table = document.getElementById(bar.dataset.filterFor);
       if (!table) return;
       var chips = $$('[data-filter]', bar);
       var rows  = $$('tbody tr', table);
       var empty = document.getElementById(bar.dataset.filterFor + '-empty');
+      if (!chips.some(function (c) { return c.dataset.filter === type; })) type = 'all';
+      apply(type);
 
       function apply(type) {
         var shown = 0;
@@ -312,13 +316,78 @@
           history.replaceState(null, '', url.pathname + url.search + location.hash);
         } catch (err) { /* old browser: filter still works, just not remembered */ }
       }
+    }
+    function applyAll() {
+      var type = new URLSearchParams(location.search).get('type') || 'all';
+      $$('.filter-bar[data-filter-for]').forEach(function (bar) { applyBar(bar, type); });
+    }
 
-      chips.forEach(function (c) { on(c, 'click', function () { apply(c.dataset.filter); }); });
-
-      var start = new URLSearchParams(location.search).get('type');
-      var known = chips.some(function (c) { return c.dataset.filter === start; });
-      apply(known ? start : 'all');
+    on(document, 'click', function (ev) {
+      var chip = ev.target.closest && ev.target.closest('.filter-bar[data-filter-for] [data-filter]');
+      if (chip) applyBar(chip.closest('.filter-bar'), chip.dataset.filter);
     });
+    on(document, 'live:updated', applyAll);
+    applyAll();
+  }
+
+  /* ------------------------------------------------------------------
+   * Live data: every [data-live] region is re-fetched in the background
+   * and swapped in when it changed, so admins see new sign-ups, status
+   * changes and counts without reloading. A region is left alone while
+   * someone is using it: focus inside, an edited field, or an open popup.
+   * Requests carry ?auto=1, which the server does not count as activity
+   * (the 5-minute idle logout still applies) and which leaves flash
+   * messages unread.
+   * ---------------------------------------------------------------- */
+  function liveRefresh() {
+    var regions = $$('[data-live]');
+    if (!regions.length || !window.fetch || !window.DOMParser) return;
+    var every = +(document.body.dataset.liveEvery || 8000);
+    var busy = false, stopped = false;
+
+    function dirty(el) {
+      if (el.contains(document.activeElement) && document.activeElement !== document.body) return true;
+      if (el.querySelector('dialog[open], details[open] form')) return true;
+      return $$('input, select, textarea', el).some(function (f) {
+        if (f.type === 'hidden' || f.type === 'submit' || f.type === 'button') return false;
+        if (f.type === 'checkbox' || f.type === 'radio') return f.checked !== f.defaultChecked;
+        if (f.tagName === 'SELECT') return [].some.call(f.options, function (o) { return o.selected !== o.defaultSelected; });
+        if (f.type === 'file') return !!f.value;
+        return f.value !== f.defaultValue;
+      });
+    }
+
+    function tick() {
+      if (busy || stopped || document.hidden) return;
+      busy = true;
+      var url = new URL(location.href);
+      url.hash = '';
+      url.searchParams.set('auto', '1');
+      fetch(url.toString(), { credentials: 'same-origin', headers: { 'X-Live': '1' } })
+        .then(function (res) {
+          // Signed out or session ended: stop; the idle watchdog takes over.
+          if (!res.ok || res.redirected) { stopped = true; return null; }
+          return res.text();
+        })
+        .then(function (html) {
+          if (!html) return;
+          var doc = new DOMParser().parseFromString(html, 'text/html');
+          var changed = false;
+          $$('[data-live]').forEach(function (el) {
+            var fresh = doc.querySelector('[data-live="' + el.dataset.live + '"]');
+            if (!fresh || fresh.innerHTML === el.innerHTML || dirty(el)) return;
+            el.innerHTML = fresh.innerHTML;
+            if (fresh.hidden !== el.hidden) el.hidden = fresh.hidden;
+            changed = true;
+          });
+          if (changed) document.dispatchEvent(new CustomEvent('live:updated'));
+        })
+        ['catch'](function () { /* offline for a moment: try again next tick */ })
+        .then(function () { busy = false; });
+    }
+
+    setInterval(tick, every);
+    on(document, 'visibilitychange', function () { if (!document.hidden) tick(); });
   }
 
   /* ------------------------------------------------------------------
@@ -456,7 +525,7 @@
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
      countdowns, tableHints, copyButtons, adminPanels, tableFilters,
-     statusFields, idleWatch].forEach(function (mod) {
+     statusFields, idleWatch, liveRefresh].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });
   }

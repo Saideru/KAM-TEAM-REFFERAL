@@ -108,6 +108,7 @@ $contact   = !empty($profile['assigned_admin'])
     ['label' => 'Service packages',   'href' => '#packages', 'icon' => 'box'],
     ['label' => 'Work progress',      'href' => '#progress', 'icon' => 'check'],
     ['label' => 'Reports',            'href' => '#reports',  'icon' => 'log'],
+    ['label' => 'Your client code',   'href' => '#client-code', 'icon' => 'link'],
     ['label' => 'Your business',      'href' => '#business', 'icon' => 'brief'],
     ['label' => 'Verify ID',          'href' => '/kyc.php',  'icon' => 'id'],
 ], 'Client') ?>
@@ -189,6 +190,20 @@ $contact   = !empty($profile['assigned_admin'])
     <?php else: ?><div class="table-scroll" tabindex="0" role="region" aria-label="Work milestones"><table><thead><tr><th>Package › milestone</th><th>Progress</th><th>Status</th></tr></thead><tbody>
       <?php foreach ($miles as $m): ?><tr><td><?= e($m['name']) ?></td><td><div class="lifecycle-bar" style="max-width:180px"><div class="lifecycle-fill ok" style="width:<?= $m['pct'] ?>%"></div></div><span class="hint"><?= $m['done'] ?> of <?= $m['total'] ?> tasks verified complete</span></td><td><?= status_pill($m['status']) ?></td></tr><?php endforeach; ?>
     </tbody></table></div><?php endif; ?>
+  </section>
+
+  <?php $myCode = (string) ($profile['referral_code'] ?? ''); $mySuffix = preg_replace('/^KT-/', '', $myCode); ?>
+  <section class="card share-card" id="client-code" style="margin-bottom:12px">
+    <span class="label">Your client code</span>
+    <?php if ($myCode !== ''): ?>
+      <div class="share share-code" style="margin-top:8px">
+        <div class="code-box"><span class="code-prefix" aria-hidden="true">KT-</span><input id="client-code-val" type="text" readonly value="<?= e($mySuffix) ?>" aria-label="Your client code, the characters after KT-"></div>
+        <button class="btn btn-sm btn-solid" type="button" data-copy="#client-code-val">Copy code</button>
+      </div>
+      <p class="hint" style="margin:8px 0 0">Your unique KAM Team code. Quote it when you contact KAM Team about your account. Friends who sign up with it are linked to your account; to <strong>earn commission</strong> on the clients you refer, add a Growth Partner account.</p>
+    <?php else: ?>
+      <p class="hint" style="margin:8px 0 0">Your code is being created — it appears here shortly.</p>
+    <?php endif; ?>
   </section>
 
   <section class="card" id="reports" style="margin-bottom:12px"><h2>Reports</h2>

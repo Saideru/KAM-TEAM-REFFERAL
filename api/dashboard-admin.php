@@ -654,6 +654,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
   <?= ui_alerts($notice, $errors) ?>
 
+  <div data-live="stats">
   <?= ui_stat_grid([
       ['label' => 'Users',    'value' => $totalUsers, 'tone' => 'cyan',
        'note'  => $adminCount . ' admin &middot; ' . $staffCount . ' staff &middot; ' . $gpCount . ' growth partner' . ($gpCount === 1 ? '' : 's') . ' &middot; ' . $clientCount . ' client' . ($clientCount === 1 ? '' : 's')],
@@ -661,10 +662,13 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       ['label' => 'Packages',  'value' => count($allPkgs)],
       ['label' => 'Revenue',   'value' => '$' . number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2), 'tone' => 'green'],
   ]) ?>
+  </div>
 
+  <div data-live="approval-alert">
   <?php if ($approvalCount): ?>
     <div class="alert alert-warn"><strong><?= count($applications) ?> account application<?= count($applications) === 1 ? '' : 's' ?> and <?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> (Growth Partner plans &amp; client deposits) waiting.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
   <?php endif; ?>
+  </div>
   <?php if (partner_tier_blocked()): ?>
     <div class="alert alert-error">Admin referral accounts are switched off in the database. Run <code>supabase/migrations/20261125_admin_unlimited_partner.sql</code> in the Supabase SQL Editor — admins get their unlimited Growth Partner account on their next page load.</div>
   <?php endif; ?>
@@ -674,7 +678,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
 
   <!-- USERS -->
-  <div id="panel-users" class="admin-panel active">
+  <div id="panel-users" class="admin-panel active" data-live="panel-users">
     <?php if ($editUser): ?>
     <div class="card edit-card">
       <div class="edit-head"><h2>Edit user — <?= e($editUser['full_name']) ?></h2><a class="btn btn-ghost btn-sm" href="/dashboard-admin.php#users">Close</a></div>
@@ -808,7 +812,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- APPROVALS -->
-  <div id="panel-approvals" class="admin-panel">
+  <div id="panel-approvals" class="admin-panel" data-live="panel-approvals">
     <div class="card" style="margin-bottom:12px"><h2>Account applications</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">New accounts wait behind the approval wall until you approve them. Approving opens their dashboard. Every account is a permanent Client plus a Growth Partner. After approval the member picks Basic or Standard; the Growth Partner term starts then.</p>
       <?php if (!$applications): ?><p class="empty">No applications waiting.</p>
@@ -868,7 +872,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- KYC -->
-  <div id="panel-kyc" class="admin-panel">
+  <div id="panel-kyc" class="admin-panel" data-live="panel-kyc">
     <div class="card" style="margin-bottom:12px"><h2>Identity verification</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Check that the name and ID number match the document images. Approving marks the account verified; rejecting lets them submit again.</p>
       <?php if (!$kycPending): ?><p class="empty">No submissions waiting.</p>
@@ -931,7 +935,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- PAYMENT SETTINGS -->
-  <div id="panel-payment" class="admin-panel">
+  <div id="panel-payment" class="admin-panel" data-live="panel-payment">
     <div class="card" style="margin-bottom:12px"><h2>Outright commission</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a client who signed up with a referral code pays the 50% advance deposit on a service package, the referrer (Growth Partner or client) earns this percentage of the deposit — Manual §3.1 sets it at 10%. Growth Partner plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
       <form method="post">
@@ -972,7 +976,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- REFERRALS -->
-  <div id="panel-referrals" class="admin-panel">
+  <div id="panel-referrals" class="admin-panel" data-live="panel-referrals">
     <?php
       // Referral network: one row per account in the network, built from
       // profiles.referred_by (the same link the partner's own downline uses).
@@ -1070,7 +1074,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- PACKAGES -->
-  <div id="panel-packages" class="admin-panel">
+  <div id="panel-packages" class="admin-panel" data-live="panel-packages">
     <?php if ($editPkg): $epHasChange = isset($scheduledByPkg[$editPkg['id']]); ?>
     <div class="card edit-card">
       <div class="edit-head"><h2>Edit package — <?= e($editPkg['name']) ?></h2><a class="btn btn-ghost btn-sm" href="/dashboard-admin.php#packages">Close</a></div>
@@ -1133,7 +1137,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- TRANSACTIONS -->
-  <div id="panel-transactions" class="admin-panel">
+  <div id="panel-transactions" class="admin-panel" data-live="panel-transactions">
     <div class="card"><h2>Transaction ledger</h2>
       <?php if (!$allTxns): ?><p class="empty">No transactions.</p>
       <?php else: ?><div class="table-scroll"><table>
@@ -1154,7 +1158,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- SERVICES -->
-  <div id="panel-services" class="admin-panel">
+  <div id="panel-services" class="admin-panel" data-live="panel-services">
     <?php if ($editSvc): ?>
     <div class="card edit-card">
       <div class="edit-head"><h2>Edit service — <?= e($editSvc['service']) ?> · <?= e($editSvc['profiles']['full_name'] ?? '') ?></h2><a class="btn btn-ghost btn-sm" href="/dashboard-admin.php#services">Close</a></div>
@@ -1180,7 +1184,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- ROULETTE -->
-  <div id="panel-roulette" class="admin-panel">
+  <div id="panel-roulette" class="admin-panel" data-live="panel-roulette">
     <div class="card" style="margin-bottom:12px"><h2>Roulette rotation</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Every account you approve is handed to the next admin in this order, then it starts again from the top: 1, 2, 3, 1, 2, 3… Paused admins are skipped. An account keeps its admin for good, so any package it buys later goes to the same person instead of taking a new turn.</p>
       <?php if (!$roulette['members']): ?><p class="empty">Nobody is in the rotation — approved accounts won't be assigned. Add an admin below.</p>
@@ -1224,7 +1228,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- NOTIFY -->
-  <div id="panel-notify" class="admin-panel">
+  <div id="panel-notify" class="admin-panel" data-live="panel-notify">
     <div class="card"><h2>Send a notification</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">Shows up in the bell on everyone's dashboard in the chosen group. Package changes, approvals and account edits already send their own notifications automatically.</p>
       <form method="post"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="send_notice">
@@ -1236,7 +1240,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- RECYCLE BIN -->
-  <div id="panel-trash" class="admin-panel">
+  <div id="panel-trash" class="admin-panel" data-live="panel-trash">
     <div class="card" style="margin-bottom:12px"><h2>Recycle bin</h2>
       <p style="font-size:13px;color:var(--text-dim);margin:0">Everything you or your staff took out of circulation. Nothing here is erased, so all of it can be put back. Who did what, and when, is in the <a href="/dashboard-admin.php#logs" onclick="document.querySelector('.admin-tab[data-panel=logs]').click()">audit log</a>.</p>
       <?php if (!$trashCount): ?><p class="empty" style="margin-top:10px">The recycle bin is empty.</p><?php endif; ?>
@@ -1332,7 +1336,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- AUDIT LOGS -->
-  <div id="panel-logs" class="admin-panel">
+  <div id="panel-logs" class="admin-panel" data-live="panel-logs">
     <div class="card"><h2>System audit log</h2>
       <nav class="log-cats" aria-label="Log categories">
         <a href="/dashboard-admin.php#logs" class="<?= $logCat === '' ? 'on' : '' ?>">All</a>

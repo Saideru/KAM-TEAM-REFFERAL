@@ -909,6 +909,33 @@ function commission_pct(string $token): float
     return $raw === '' ? 10.0 : max(0.0, min(100.0, (float) $raw));
 }
 
+// Uni-Level (Level 1 sponsor override) rate, as a % of the co-growth
+// partner's Outright Commission (Manual §3.2). Direct Level 1 only.
+function unilevel_pct(string $token): float
+{
+    $raw = get_settings($token, ['unilevel_commission_pct'])['unilevel_commission_pct'] ?? '';
+    return $raw === '' ? 5.0 : max(0.0, min(100.0, (float) $raw));
+}
+
+// The program's commission maths in one place (Manual §3, partner deck p.4):
+//   Step A  deposit   = actual invoiced setup fee × 50%
+//   Step B  outright  = deposit × 10%            (direct Growth Partner)
+//   Step C  unilevel  = outright × 5%            (that partner's direct sponsor)
+// Pass the setup fee, or the deposit with $isDeposit = true. Rates default to
+// 10% / 5%. Example: setup $1,000 → deposit $500 → outright $50 → unilevel $2.50.
+function commission_split(float $amount, bool $isDeposit = false, float $outrightPct = 10.0, float $unilevelPct = 5.0): array
+{
+    $deposit  = $isDeposit ? $amount : $amount * 0.5;
+    $outright = $deposit * $outrightPct / 100;
+    $unilevel = $outright * $unilevelPct / 100;
+    return [
+        'setup'    => round($isDeposit ? $deposit * 2 : $amount, 2),
+        'deposit'  => round($deposit, 2),
+        'outright' => round($outright, 2),
+        'unilevel' => round($unilevel, 2),
+    ];
+}
+
 // 5.0 -> "5", 7.5 -> "7.5", 10.0 -> "10"
 function pct_label(float $pct): string
 {
@@ -932,6 +959,10 @@ function pay_referral_commission(string $token, array $txn): void
     if (!$refId) return;
     $referrer = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($refId), null, $token)['body'][0] ?? null;
     if (!$referrer || !empty($referrer['deleted_at'])) return;
+    // Only Growth Partners earn (Manual §1.1, §2.2). Clients have a code too,
+    // and sign-ups made with it are linked to them, but a client with no
+    // Growth Partner side is not paid commission.
+    if (($referrer['role'] ?? '') === 'client' && empty($referrer['affiliate_tier'])) return;
     // An expired Growth Partner term past its grace period earns nothing.
     if (affiliate_state($referrer) === 'terminated') return;
 
@@ -942,7 +973,9 @@ function pay_referral_commission(string $token, array $txn): void
             ['lifecycle_expires_at' => date('c', strtotime('+3 months', $base))], $token, ['Prefer: return=minimal']);
     }
 
-    $commission = round($amount * $pct / 100, 2);
+    $ulPct      = unilevel_pct($token);
+    $split      = commission_split($amount, true, $pct, $ulPct);
+    $commission = $split['outright'];
     if ($commission <= 0) return;
 
     $res = supabase_request('POST', '/rest/v1/transactions', [
@@ -963,6 +996,35 @@ function pay_referral_commission(string $token, array $txn): void
         ($buyer['full_name'] ?? 'A client you referred') . ' paid the advance deposit on ' . ($txn['packages']['name'] ?? 'a package')
         . '. You earned ' . pct_label($pct) . '% of it'
         . (!empty($referrer['lifecycle_expires_at']) ? ' and 3 more months on your Growth Partner term.' : '.'), $refId);
+
+    // Step C — Uni-Level: the referrer's direct sponsor earns 5% of this
+    // Outright Commission (Manual §3.2). Direct Level 1 only: it is never
+    // passed further up. The sponsor must be a Growth Partner whose term
+    // has not ended; nothing is paid for joining or for plan payments
+    // (this runs only for approved client deposits).
+    $sponsorId = $referrer['referred_by'] ?? null;
+    if (!$sponsorId || $split['unilevel'] <= 0) return;
+    $sponsor = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($sponsorId), null, $token)['body'][0] ?? null;
+    if (!$sponsor || !empty($sponsor['deleted_at'])) return;
+    if (($sponsor['role'] ?? '') !== 'growth_partner' && empty($sponsor['affiliate_tier'])) return;
+    if (affiliate_state($sponsor) === 'terminated') return;
+
+    $ul = supabase_request('POST', '/rest/v1/transactions', [
+        'user_id'        => $sponsorId,
+        'package_id'     => $txn['package_id'] ?? null,
+        'source_user_id' => $txn['user_id'],
+        'source_txn_id'  => $txn['id'],
+        'amount'         => $split['unilevel'],
+        'type'           => 'commission',
+        'status'         => 'completed',
+        'notes'          => pct_label($ulPct) . '% Uni-Level (Level 1) on ' . ($referrer['full_name'] ?? 'your co-growth partner') . '\'s $' . number_format($commission, 2) . ' Outright Commission',
+    ], $token, ['Prefer: return=minimal']);
+    if ($ul['error']) return;
+
+    audit_log($token, 'unilevel_commission', 'transaction', $txn['id'],
+        'Paid $' . number_format($split['unilevel'], 2) . ' (' . pct_label($ulPct) . '% of $' . number_format($commission, 2) . ' Outright) to sponsor of ' . ($referrer['username'] ?? $refId));
+    notify($token, 'You earned $' . number_format($split['unilevel'], 2) . ' Uni-Level',
+        ($referrer['full_name'] ?? 'Your co-growth partner') . '\'s client paid a deposit. You earned ' . pct_label($ulPct) . '% of their $' . number_format($commission, 2) . ' Outright Commission.', $sponsorId);
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -1207,9 +1269,23 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
                   .   '<input id="share-code" type="text" readonly value="' . e($suffix) . '" aria-label="Referral code, the characters after KT-"></div>'
                   .   '<button class="btn btn-sm btn-solid" type="button" data-copy="#share-code">Copy code</button></div>'
                   . '<p class="hint" style="margin:6px 0 0">Sign-ups type these ' . strlen($suffix) . ' characters after the printed <strong>KT-</strong> on the registration form.</p>'
-                  . '<div class="share share-link" style="margin-top:14px"><input id="share-link" type="text" readonly value="' . e($link) . '" aria-label="Referral link">'
+                  . '<div class="how-refer">'
+                  .   '<h3>How a client uses your code</h3>'
+                  .   '<ol>'
+                  .     '<li>They open the sign-up page and choose <strong>Client — I want KAM Team services</strong>.</li>'
+                  .     '<li>In <strong>Referral code</strong> they type <strong>' . e($suffix) . '</strong> after the printed KT-.</li>'
+                  .     '<li>Once an admin approves them, they appear on your <a href="/dashboard-affiliate.php?view=clients">Clients referred</a> page.</li>'
+                  .     '<li>When they pay the 50% advance deposit on a package, your commission is credited.</li>'
+                  .   '</ol>'
+                  . '</div>'
+                  . '<span class="label" style="display:block;margin-top:16px">Client sign-up link</span>'
+                  . '<div class="share share-link" style="margin-top:6px"><input id="share-client-link" type="text" readonly value="' . e($link . '&as=client') . '" aria-label="Client sign-up link">'
+                  .   '<button class="btn btn-sm" type="button" data-copy="#share-client-link">Copy link</button></div>'
+                  . '<p class="hint" style="margin:6px 0 0">Opens sign-up with <strong>Client</strong> selected and your code already filled in.</p>'
+                  . '<span class="label" style="display:block;margin-top:14px">Growth Partner invite link</span>'
+                  . '<div class="share share-link" style="margin-top:6px"><input id="share-link" type="text" readonly value="' . e($link) . '" aria-label="Growth Partner invite link">'
                   .   '<button class="btn btn-sm" type="button" data-copy="#share-link">Copy link</button></div>'
-                  . '<p class="hint" style="margin:6px 0 0">Or share the link — it fills your code in for them.</p>';
+                  . '<p class="hint" style="margin:6px 0 0">For people who want to refer clients themselves — they join your downline.</p>';
         } else {
             $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your Growth Partner term has expired. New referrals are not credited until you renew or upgrade.</p>';
         }
@@ -1238,9 +1314,11 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
             if (!$coms) {
                 $out .= '<p class="empty">No commissions yet.</p>';
             } else {
-                $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Commission ledger"><table><thead><tr><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
+                $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Commission ledger"><table><thead><tr><th>Type</th><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
                 foreach ($coms as $c) {
-                    $out .= '<tr><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
+                    // Uni-Level rows are the 5% Level 1 override on a co-growth partner's sale.
+                    $isUl = str_contains((string) ($c['notes'] ?? ''), 'Uni-Level');
+                    $out .= '<tr><td><span class="pill ' . ($isUl ? 'completed' : 'active') . '" title="' . e((string) ($c['notes'] ?? '')) . '">' . ($isUl ? 'Uni-Level 5%' : 'Outright 10%') . '</span></td><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
                           . '<td style="color:var(--green)">$' . number_format((float) $c['amount'], 2) . '</td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td></tr>';
                 }
                 $out .= '</tbody></table></div>';
@@ -1253,6 +1331,60 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
 
     // The copy buttons' behaviour lives in assets/js/app.js (copyButtons).
     return $out;
+}
+
+// The Growth Partner's "Clients referred" page: every Client who signed up
+// with this partner's code, their approval status, what they have bought,
+// and the commission each has earned the partner.
+function clients_referred_html(string $token, array $profile): string
+{
+    $uid     = urlencode($profile['id']);
+    $clients = supabase_request('GET', '/rest/v1/profiles?select=id,full_name,username,status,created_at,company'
+        . '&role=eq.client&deleted_at=is.null&referred_by=eq.' . $uid . '&order=created_at.desc', null, $token)['body'] ?? [];
+    $clients = is_array($clients) ? $clients : [];
+
+    $out = '<section class="card" id="clients" style="margin-bottom:12px"><h2>Clients referred</h2>'
+         . '<p class="hint" style="margin:0 0 12px">Clients who signed up with your code. You earn commission when a client pays the 50% advance deposit on a package — monthly fees are not commissionable.</p>';
+    if (!$clients) {
+        return $out . '<p class="empty">No clients yet. Share your <a href="/dashboard-affiliate.php?view=share">client sign-up link</a> — clients who use your code appear here.</p></section>';
+    }
+
+    $ids = implode(',', array_map(fn($c) => urlencode($c['id']), $clients));
+    $deps = supabase_request('GET', '/rest/v1/transactions?select=user_id,amount,status&type=eq.deposit&user_id=in.(' . $ids . ')', null, $token)['body'] ?? [];
+    $coms = supabase_request('GET', '/rest/v1/transactions?select=source_user_id,amount&type=eq.commission&status=eq.completed&user_id=eq.' . $uid, null, $token)['body'] ?? [];
+    $paid = $earned = [];
+    foreach (is_array($deps) ? $deps : [] as $d) {
+        if (($d['status'] ?? '') === 'completed') $paid[$d['user_id']] = ($paid[$d['user_id']] ?? 0) + 1;
+    }
+    foreach (is_array($coms) ? $coms : [] as $c) {
+        $earned[$c['source_user_id']] = ($earned[$c['source_user_id']] ?? 0) + (float) $c['amount'];
+    }
+    $total = array_sum($earned);
+    $active = count(array_filter($clients, fn($c) => $c['status'] === 'accepted'));
+
+    $out .= '<div class="downline-levels" style="margin-bottom:10px"><span class="chip">' . count($clients) . ' referred</span>'
+          . '<span class="chip">' . $active . ' active</span>'
+          . '<span class="chip">' . count($paid) . ' paid a deposit</span>'
+          . '<span class="chip">$' . number_format($total, 2) . ' earned</span></div>';
+
+    $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Clients referred"><table>'
+          . '<thead><tr><th scope="col">Client</th><th scope="col">Joined</th><th scope="col">Status</th><th scope="col">Deposits paid</th><th scope="col">Your commission</th></tr></thead><tbody>';
+    foreach ($clients as $c) {
+        [$label, $pill] = match ($c['status']) {
+            'accepted'  => ['Active', 'active'],
+            'pending'   => ['Awaiting approval', 'pending'],
+            'rejected'  => ['Not approved', 'failed'],
+            'suspended' => ['Suspended', 'suspended'],
+            default     => [ucfirst((string) $c['status']), 'pending'],
+        };
+        $out .= '<tr><td><strong>' . e($c['full_name']) . '</strong>'
+              . (!empty($c['company']) ? '<span class="ut-sub">' . e($c['company']) . '</span>' : '') . '</td>'
+              . '<td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td>'
+              . '<td><span class="pill ' . e($pill) . '">' . e($label) . '</span></td>'
+              . '<td>' . ($paid[$c['id']] ?? 0) . '</td>'
+              . '<td style="color:var(--green)">$' . number_format($earned[$c['id']] ?? 0, 2) . '</td></tr>';
+    }
+    return $out . '</tbody></table></div></section>';
 }
 
 // ---- Downline graph ---------------------------------------------------
@@ -1436,7 +1568,13 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
     $out = '';
     foreach ($items as $it) {
         $svg   = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ($icons[$it['icon'] ?? 'home'] ?? '') . '</svg>';
-        $count = !empty($it['count']) ? '<span class="tab-count">' . (int) $it['count'] . '</span>' : '';
+        // Panel counters are always rendered (hidden at 0) and marked live, so
+        // a background refresh can bring a badge in or out without a reload.
+        if (isset($it['panel']) && array_key_exists('count', $it)) {
+            $count = '<span class="tab-count" data-live="count-' . e($it['panel']) . '"' . (empty($it['count']) ? ' hidden' : '') . '>' . (int) $it['count'] . '</span>';
+        } else {
+            $count = !empty($it['count']) ? '<span class="tab-count">' . (int) $it['count'] . '</span>' : '';
+        }
         $inner = $svg . '<span class="side-label">' . e($it['label']) . '</span>' . $count;
         if (isset($it['panel'])) {
             $on = $active === $it['panel'];
@@ -1814,6 +1952,9 @@ function flash(?string $type = null, ?string $message = null): ?array
         _save_session();
         return null;
     }
+    // A background live refresh (?auto=1) must not use up the message the
+    // visible page is about to show.
+    if (isset($_GET['auto'])) return null;
     $f = $session['flash'] ?? null;
     unset($session['flash']);
     _save_session();
