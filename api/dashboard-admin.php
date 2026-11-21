@@ -573,7 +573,10 @@ $totalUsers    = count(array_filter($allProfiles, fn($p) => empty($p['deleted_at
 $adminCount    = count(array_filter($allProfiles, fn($p) => $p['role'] === 'admin' && empty($p['deleted_at'])));
 $staffCount    = count(array_filter($allProfiles, fn($p) => $p['role'] === 'staff' && empty($p['deleted_at'])));
 $clientCount   = count(array_filter($allProfiles, fn($p) => $p['role'] === 'client' && empty($p['deleted_at'])));
-$gpCount       = count(array_filter($allProfiles, fn($p) => $p['role'] === 'client' && !empty($p['affiliate_tier']) && empty($p['deleted_at'])));
+// Growth Partner accounts: their own rows, plus legacy dual-side clients
+// that still carry a partner plan on the client row.
+$gpCount       = count(array_filter($allProfiles, fn($p) => empty($p['deleted_at'])
+                    && ($p['role'] === 'growth_partner' || ($p['role'] === 'client' && !empty($p['affiliate_tier'])))));
 
 $clients = array_filter($allProfiles, fn($p) => $p['role'] === 'client' && empty($p['deleted_at']));
 
@@ -633,7 +636,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
   <?= ui_stat_grid([
       ['label' => 'Users',    'value' => $totalUsers, 'tone' => 'cyan',
-       'note'  => $adminCount . ' admin &middot; ' . $staffCount . ' staff &middot; ' . $clientCount . ' member' . ($clientCount === 1 ? '' : 's') . ' (' . $gpCount . ' on a partner plan)'],
+       'note'  => $adminCount . ' admin &middot; ' . $staffCount . ' staff &middot; ' . $gpCount . ' growth partner' . ($gpCount === 1 ? '' : 's') . ' &middot; ' . $clientCount . ' client' . ($clientCount === 1 ? '' : 's')],
       ['label' => 'Referrals', 'value' => count($allRefs)],
       ['label' => 'Packages',  'value' => count($allPkgs)],
       ['label' => 'Revenue',   'value' => '$' . number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2), 'tone' => 'green'],
