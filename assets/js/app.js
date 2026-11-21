@@ -79,7 +79,8 @@
    * ---------------------------------------------------------------- */
   function termsChecklist() {
     var root = $('#terms-checklist');
-    if (!root) return;
+    if (!root || root.dataset.wired) return;    // inline fallback already wired it
+    root.dataset.wired = '1';
 
     var box    = $('input[data-terms]', root);
     var open   = $('[data-open]', root);

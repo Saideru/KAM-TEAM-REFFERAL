@@ -123,7 +123,70 @@ function terms_checklist(array $checked, string $kicker = '04 // Program terms',
         .   '<div class="terms-dlg-foot"><span class="terms-dlg-hint">Scroll to the end to continue</span>'
         .   '<button type="button" class="btn btn-sm btn-ghost" data-close>Close</button>'
         .   '<button type="button" class="btn btn-sm btn-solid" data-agree disabled>I agree</button></div>'
-        . '</dialog></fieldset>';
+        . '</dialog></fieldset>'
+        // Inline fallback so the Read-rules button and the accept checkbox
+        // work even if /assets/js/app.js is still cached, is blocked, or
+        // 404s. app.js's termsChecklist does the same thing on top of this;
+        // both call refresh() on change, so running twice is harmless.
+        . terms_checklist_inline_script($submitId);
+}
+
+function terms_checklist_inline_script(string $submitId): string
+{
+    $sid = $submitId !== '' ? json_encode($submitId) : 'null';
+    return <<<JS
+<script>
+(function () {
+  var root = document.getElementById('terms-checklist');
+  if (!root || root.dataset.wired) return;
+  root.dataset.wired = '1';
+  var box    = root.querySelector('input[data-terms]');
+  var open   = root.querySelector('[data-open]');
+  var dlg    = document.getElementById('terms-dlg');
+  var body   = dlg && dlg.querySelector('.terms-dlg-body');
+  var agree  = dlg && dlg.querySelector('[data-agree]');
+  var close  = dlg && dlg.querySelector('[data-close]');
+  var sid    = {$sid};
+  var submit = sid && document.getElementById(sid);
+
+  function refresh() {
+    root.classList.toggle('done', box.checked);
+    if (submit) submit.disabled = !box.checked;
+  }
+  function doClose() { if (dlg.close) dlg.close(); else dlg.removeAttribute('open'); }
+  function checkRead() {
+    if (body.scrollTop + body.clientHeight >= body.scrollHeight - 8) {
+      agree.disabled = false;
+      dlg.classList.add('is-read');
+    }
+  }
+
+  if (open && dlg) {
+    open.addEventListener('click', function () {
+      if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+      body.scrollTop = 0;
+      checkRead();
+    });
+    body.addEventListener('scroll', checkRead);
+    if (close) close.addEventListener('click', doClose);
+    dlg.addEventListener('click', function (ev) { if (ev.target === dlg) doClose(); });
+    agree.addEventListener('click', function () {
+      box.disabled = false;
+      box.checked = true;
+      open.textContent = 'Read again';
+      doClose();
+      refresh();
+    });
+  }
+  // A locked box opens the rules instead of silently doing nothing.
+  box.closest('label').addEventListener('click', function (ev) {
+    if (box.disabled && open) { ev.preventDefault(); open.click(); }
+  });
+  box.addEventListener('change', refresh);
+  refresh();
+})();
+</script>
+JS;
 }
 
 // Only the known checklist keys from a POST.
