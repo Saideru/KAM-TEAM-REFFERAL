@@ -271,6 +271,9 @@ main:focus { outline: none; }
 
 .ref-badge { display: inline-flex; gap: 6px; align-items: center; background: var(--orange-dim); border: 1px solid rgba(184, 66, 15, .25); border-radius: 999px; padding: 5px 12px; margin-bottom: 14px; font-size: 12px; color: var(--rust); }
 
+/* Inline referral code chip (e.g. on the approval wall "Referred by" row). */
+.ref-code { font-family: var(--font); font-size: 12px; font-weight: 600; letter-spacing: .06em; padding: 2px 8px; border-radius: var(--radius-sm); background: var(--orange-dim); color: var(--rust); border: 1px solid rgba(184, 66, 15, .25); }
+
 /* ---------- Role picker ---------- */
 .role-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .role-option {
@@ -634,6 +637,11 @@ a.notif-item:hover { background: var(--surface-2); }
 }
 section[id], div[id="overview"] { scroll-margin-top: 16px; }
 
+/* POST-form sidebar entries (session switch, etc.) — the form is the
+   row, the button inside is the link that app_sidebar normally renders. */
+.side-form { margin: 0; padding: 0; width: 100%; }
+.side-form .side-link { width: 100%; }
+
 /* ---------- Account type picker (registration) ---------- */
 .acct-pick { margin-bottom: 16px; }
 .acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -656,6 +664,9 @@ section[id], div[id="overview"] { scroll-margin-top: 16px; }
 .acct-body .label { display: block; margin-bottom: 2px; }
 .acct-body strong { display: block; font-size: 14px; color: var(--text); margin-bottom: 4px; }
 .acct-body p { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-muted); }
+
+/* "(required)" marker on the Growth Partner ref-code field */
+.ref-req { color: var(--rust); letter-spacing: .12em; text-transform: uppercase; font-size: 10px; margin-left: 4px; }
 
 /* ---------- Activate client card (affiliate-only members) ---------- */
 .activate-card { border: 1px dashed var(--border-light); background: var(--surface-2); }
@@ -811,7 +822,28 @@ section[id], div[id="overview"] { scroll-margin-top: 16px; }
 /* ---------- Topbar actions ---------- */
 .topbar { position: sticky; top: 0; z-index: var(--z-topbar); }
 .topbar-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
-.topbar-logout { margin: 0; }
+
+/* The one connective link between Client and Growth Partner. Reads as a
+   pill so it looks nothing like the other small buttons — this is a
+   deliberate account switch, not an action on the current page. */
+.acct-switch {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px 6px 14px;
+  border: 1px solid var(--rust); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--rust);
+  font-family: var(--font); font-size: 11px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase; text-decoration: none;
+  line-height: 1; transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.acct-switch:hover { background: var(--orange); color: #1A1917; text-decoration: none; }
+.acct-switch small {
+  font-family: var(--font); font-size: 10px; font-weight: 500;
+  letter-spacing: .06em; text-transform: none; opacity: .8;
+  padding-left: 6px; border-left: 1px solid currentColor;
+}
+.acct-switch:hover small { opacity: .9; }
+@media (max-width: 640px) { .acct-switch small { display: none; } }
+.topbar-logout, .topbar-post { margin: 0; }
 @media (max-width: 480px) {
   .topbar-inner { padding: var(--space-2) var(--space-3); gap: var(--space-2); }
   .topbar .lockup .kam-mark { width: 92px; }

@@ -416,15 +416,18 @@ insert into public.packages (name, description, price, monthly_price, commission
 --   password: Numbers20:20
 -- bcrypt cost 10 to match PHP's password_hash() default.
 -- ---------------------------------------------------------------------
-insert into public.profiles (full_name, username, email, password_hash, role, status)
+insert into public.profiles (full_name, username, email, password_hash, role, status, referral_code)
 values
-  ('Michael', 'michael', 'michael@kam-team.com', extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted'),
-  ('Azi',     'azi',     'azi@kam-team.com',     extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted'),
-  ('Siedel',  'siedel',  'siedel@kam-team.com',  extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted')
+  -- The main admin: root of the referral tree, code KT-000001.
+  ('Admin',   'admin',   'admin@kam-team.com',   extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted', 'KT-000001'),
+  ('Michael', 'michael', 'michael@kam-team.com', extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted', null),
+  ('Azi',     'azi',     'azi@kam-team.com',     extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted', null),
+  ('Siedel',  'siedel',  'siedel@kam-team.com',  extensions.crypt('Numbers20:20', extensions.gen_salt('bf', 10)), 'admin', 'accepted', null)
 on conflict (username) do update
 set password_hash = excluded.password_hash,
     role          = 'admin',
     status        = 'accepted',
+    referral_code = coalesce(excluded.referral_code, public.profiles.referral_code),
     deleted_at    = null;
 
 -- ---------------------------------------------------------------------
@@ -508,9 +511,10 @@ $$;
 drop trigger if exists profiles_assign_roulette on public.profiles;
 drop function if exists public.assign_from_roulette();
 
--- Seed the rotation with the three admins: michael (1), azi (2), siedel (3)
+-- Seed the rotation with every admin, in a fixed order:
+-- 0=admin (main basket), 1=michael, 2=azi, 3=siedel, 100=anyone else.
 insert into public.roulette_members (admin_id, position)
-select id, coalesce(array_position(array['michael', 'azi', 'siedel'], username), 100)
+select id, coalesce(array_position(array['admin', 'michael', 'azi', 'siedel'], username), 100) - 1
 from public.profiles
 where role = 'admin' and deleted_at is null
 on conflict (admin_id) do nothing;

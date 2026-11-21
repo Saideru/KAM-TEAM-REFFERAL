@@ -93,15 +93,43 @@ function ui_foot(string $scripts = ''): string
 /**
  * @param array{
  *   csrf:string, bell?:string, role?:string, role_class?:string,
- *   links?:array<array{label:string,href:string}>
+ *   links?:array<array{label:string,href:string}>,
+ *   switch?:array{label:string, href:string, note?:string}
  * } $o
+ *
+ * `switch` renders the one-and-only connective link between the Client
+ * and Growth Partner sides. It lives in the topbar so the dashboards
+ * themselves stay fully segregated (no cross-nav in the sidebar, no
+ * account-switch tab bar inside the page).
  */
 function ui_topbar(array $o): string
 {
     $right = $o['bell'] ?? '';
 
+    if (!empty($o['switch'])) {
+        $sw   = $o['switch'];
+        $note = !empty($sw['note']) ? '<small>' . e($sw['note']) . '</small>' : '';
+        $right .= '<a class="acct-switch" href="' . e($sw['href']) . '">'
+            . '<span class="acct-switch-label">' . e($sw['label']) . '</span>'
+            . $note . '<span aria-hidden="true">→</span></a>';
+    }
+
     foreach ($o['links'] ?? [] as $link) {
-        $right .= '<a class="btn btn-ghost btn-sm" href="' . e($link['href']) . '">' . e($link['label']) . '</a>';
+        if (!empty($link['post'])) {
+            // POST form styled as the same small button. Used for things
+            // that mutate state from the topbar (e.g. switching sessions
+            // back to a base account after an admin → GP switch).
+            $params = '';
+            foreach ($link['params'] ?? [] as $k => $v) {
+                $params .= '<input type="hidden" name="' . e($k) . '" value="' . e((string) $v) . '">';
+            }
+            $right .= '<form class="topbar-post" method="post" action="' . e($link['href']) . '">'
+                . '<input type="hidden" name="csrf" value="' . e($link['csrf'] ?? $o['csrf']) . '">'
+                . $params
+                . '<button class="btn btn-ghost btn-sm" type="submit">' . e($link['label']) . '</button></form>';
+        } else {
+            $right .= '<a class="btn btn-ghost btn-sm" href="' . e($link['href']) . '">' . e($link['label']) . '</a>';
+        }
     }
 
     if (!empty($o['role'])) {

@@ -48,6 +48,23 @@ if ($action === 'seen') {
     $reply(['ok' => true, 'remaining' => session_idle_remaining()]);
 }
 
+// action=switch — flip the session to a linked account (admin -> their
+// Growth Partner row, Client -> their linked GP, or back again). POST
+// only, CSRF-checked, and switch_session_to verifies the pairing.
+if ($action === 'switch') {
+    if (!$isPost) $reply(['ok' => false, 'error' => 'POST required'], 405);
+    $target = (string) ($_POST['to'] ?? '');
+    if ($target === '') {
+        // Convenience: ?to=base returns to the base account.
+        $target = session_base_user_id() ?? '';
+    }
+    $err = switch_session_to($token, $target);
+    if ($err) $reply(['ok' => false, 'error' => $err], 400);
+    $next = current_profile();
+    header('Location: ' . dashboard_url($next['role'] ?? 'client'));
+    exit;
+}
+
 // action=ping
 if ($isPost) session_touch(true);
 

@@ -12,6 +12,15 @@ if (!is_walled($profile)) { redirect_by_role(); }
 $csrf     = csrf_token();
 $rejected = $profile['status'] === 'rejected';
 $first    = explode(' ', $profile['full_name'])[0];
+
+// Who referred this applicant — shown on the wall so they can tell the
+// upline their code was recorded. Nothing shown if they signed up without
+// a code (allowed for Clients; Growth Partners always carry one).
+$referrer = null;
+if (!empty($profile['referred_by'])) {
+    $ref = supabase_request('GET', '/rest/v1/profiles?select=referral_code,full_name,username&id=eq.' . urlencode($profile['referred_by']), null, $token);
+    $referrer = $ref['body'][0] ?? null;
+}
 ?>
 <?= ui_head([
     'title'       => 'Application ' . ($rejected ? 'not approved' : 'under review') . ' // KAM Team',
@@ -41,6 +50,11 @@ $first    = explode(' ', $profile['full_name'])[0];
     <div class="profile-info" style="margin:16px 0">
       <div class="profile-row"><span class="label">Applied as</span><span><?= e(role_name($profile['role'])) ?></span></div>
       <div class="profile-row"><span class="label">Username</span><span><?= e($profile['username']) ?></span></div>
+      <?php if ($referrer): ?>
+        <div class="profile-row"><span class="label">Referred by</span><span><code class="ref-code"><?= e($referrer['referral_code'] ?? '—') ?></code> <span style="color:var(--text-dim);font-size:12px">· <?= e($referrer['full_name'] ?: $referrer['username']) ?></span></span></div>
+      <?php else: ?>
+        <div class="profile-row"><span class="label">Referred by</span><span style="color:var(--text-dim)">No referral code used</span></div>
+      <?php endif; ?>
       <div class="profile-row"><span class="label">Submitted</span><span><?= date('M j, Y H:i', strtotime($profile['created_at'])) ?></span></div>
       <div class="profile-row"><span class="label">Status</span><span class="pill <?= $rejected ? 'failed' : 'pending' ?>"><?= $rejected ? 'rejected' : 'pending review' ?></span></div>
     </div>

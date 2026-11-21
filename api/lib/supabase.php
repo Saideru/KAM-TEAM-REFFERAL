@@ -225,16 +225,18 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
         }
     }
 
-    // One account, both sides: a permanent Client that buys service
-    // packages, and a Growth Partner that refers clients. account_mode
-    // decides which side is open after approval:
-    //   'client'    - Client dashboard is primary; Growth Partner activates
-    //                 when the member picks a Basic/Standard plan.
-    //   'affiliate' - Only the Growth Partner side is open; the Client
-    //                 dashboard stays dormant until the member clicks
-    //                 "Activate Client account" on /dashboard-affiliate.php.
-    $role = 'client';
-    $mode = ($meta['account_mode'] ?? 'client') === 'affiliate' ? 'affiliate' : 'client';
+    // Four account types live in their own rows (see migration
+    // 20261128_separate_accounts.sql). Public sign-up creates one of two:
+    //
+    //   client           buys KAM TEAM services, no affiliate side
+    //   growth_partner   refers clients, no service-package side
+    //
+    // If the member wants the other side later, "Activate …" on their
+    // dashboard creates a new linked row of the other type.
+    $role = ($meta['account_mode'] ?? 'client') === 'affiliate' ? 'growth_partner' : 'client';
+    // account_mode is kept for the legacy dual-side rows — on new rows
+    // the role IS the mode, so account_mode is null.
+    $mode = null;
 
     // Every new account waits behind the approval wall until an admin accepts
     // it; the lifecycle clock starts at approval (see approve_application()).
@@ -380,9 +382,12 @@ function check_account_status(?array $profile): bool
 }
 
 // A member: one account that is a permanent Client and a Growth Partner.
+// A "member" is anyone who signed up through the public form — Client,
+// Growth Partner, or a legacy dual-side account (role='client' with an
+// affiliate_tier set). Admins and staff are KAM TEAM's own people.
 function is_member(?array $profile): bool
 {
-    return ($profile['role'] ?? '') === 'client';
+    return in_array($profile['role'] ?? '', ['client', 'growth_partner'], true);
 }
 
 // 'client'    - Client side is primary (the dashboards show both sides).
@@ -426,10 +431,11 @@ function is_walled(?array $profile): bool
 function dashboard_url(string $role): string
 {
     return [
-        'admin'     => '/dashboard-admin.php',
-        'staff'     => '/work.php',
-        'client'    => '/dashboard-client.php',
-        'affiliate' => '/dashboard-client.php',   // legacy rows, pre-migration
+        'admin'          => '/dashboard-admin.php',
+        'staff'          => '/work.php',
+        'client'         => '/dashboard-client.php',
+        'growth_partner' => '/dashboard-affiliate.php',
+        'affiliate'      => '/dashboard-client.php',   // legacy rows, pre-migration
     ][$role] ?? '/dashboard-client.php';
 }
 
@@ -624,18 +630,113 @@ function partner_tier_blocked(?bool $set = null): bool
 // Every admin has a Growth Partner account that never expires. Admins that
 // pre-date this rule are fixed up the next time they load a page, so no one
 // has to remember to run the backfill by hand.
+// Every admin has a dedicated Growth Partner row (role='growth_partner',
+// tier Unlimited, no expiry) linked via profiles.linked_profile_id. This
+// helper makes sure the link exists — the row itself is created by the
+// 20261128_separate_accounts migration for the main admin, and by this
+// helper on sign-in for any other admin without one yet.
 function ensure_admin_partner(string $token, array &$profile): void
 {
-    if (($profile['role'] ?? '') !== 'admin' || tier_unlimited($profile)) return;
+    if (($profile['role'] ?? '') !== 'admin') return;
 
-    $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($profile['id']),
-        ['affiliate_tier' => TIER_UNLIMITED, 'lifecycle_expires_at' => null], $token, ['Prefer: return=minimal']);
-    if ($res['error']) { partner_tier_blocked(true); return; }
+    // Already linked?
+    $linkedId = $profile['linked_profile_id'] ?? null;
+    if ($linkedId) {
+        $peek = supabase_request('GET',
+            '/rest/v1/profiles?select=id,role&id=eq.' . urlencode($linkedId), null, $token);
+        if (!empty($peek['body'][0]) && ($peek['body'][0]['role'] ?? '') === 'growth_partner') {
+            return;
+        }
+    }
 
-    $profile['affiliate_tier']       = TIER_UNLIMITED;
-    $profile['lifecycle_expires_at'] = null;
-    audit_log($token, 'partner_account_opened', 'profile', $profile['id'],
-        'Unlimited Growth Partner account opened for admin ' . ($profile['username'] ?? ''));
+    // Does one already exist pointing back at this admin?
+    $find = supabase_request('GET',
+        '/rest/v1/profiles?select=id&role=eq.growth_partner&linked_profile_id=eq.' . urlencode($profile['id']),
+        null, $token);
+    $gpId = $find['body'][0]['id'] ?? null;
+
+    if (!$gpId) {
+        // Build a fresh GP row for this admin. Username is derived from
+        // the admin's username to stay human-recognisable; the trigger
+        // generates a unique referral_code.
+        $username = mb_substr(($profile['username'] ?? 'admin') . '-gp', 0, 20);
+        $row = supabase_request('POST', '/rest/v1/profiles', [
+            'full_name'         => ($profile['full_name'] ?? 'Admin') . ' — Growth Partner',
+            'username'          => $username,
+            'email'             => $profile['email']         ?? null,
+            'password_hash'     => $profile['password_hash'] ?? null,
+            'role'              => 'growth_partner',
+            'status'            => 'accepted',
+            'affiliate_tier'    => TIER_UNLIMITED,
+            'lifecycle_expires_at' => null,
+            'linked_profile_id' => $profile['id'],
+        ], $token, ['Prefer: return=representation']);
+        if ($row['error']) { partner_tier_blocked(true); return; }
+        $gpId = $row['body'][0]['id'] ?? null;
+        if ($gpId) {
+            audit_log($token, 'partner_account_opened', 'profile', $gpId,
+                'Linked Growth Partner account opened for admin ' . ($profile['username'] ?? ''));
+        }
+    }
+
+    if ($gpId && $linkedId !== $gpId) {
+        supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($profile['id']),
+            ['linked_profile_id' => $gpId], $token, ['Prefer: return=minimal']);
+        $profile['linked_profile_id'] = $gpId;
+    }
+}
+
+// Fetches the row this profile is paired with. Returns null when there
+// is none. Used by the account switcher and by pages that need to show
+// data from the paired side (e.g. admin dashboard surfacing its GP tier).
+function linked_profile(string $token, ?array $profile): ?array
+{
+    if (empty($profile['linked_profile_id'])) return null;
+    $res = supabase_request('GET',
+        '/rest/v1/profiles?select=*&id=eq.' . urlencode($profile['linked_profile_id']),
+        null, $token);
+    return $res['body'][0] ?? null;
+}
+
+// The session can carry two user_ids: `user_id` is whichever account the
+// visitor is currently viewing; `base_user_id` is whoever they actually
+// signed in as, so "switch back" always returns there. Both default to
+// the signed-in user when no switch has happened.
+function session_base_user_id(): ?string
+{
+    $s = &_session();
+    return $s['sb']['base_user_id'] ?? $s['sb']['user_id'] ?? null;
+}
+
+// Switches the active profile to $targetId. Allowed only when the target
+// is linked to the base user (or IS the base user), so a switch can never
+// escape the pair and grant extra access.
+function switch_session_to(string $token, string $targetId): ?string
+{
+    $s = &_session();
+    $baseId = session_base_user_id();
+    if (!$baseId) return 'Not signed in.';
+
+    if ($targetId !== $baseId) {
+        $base   = supabase_request('GET',
+            '/rest/v1/profiles?select=id,linked_profile_id&id=eq.' . urlencode($baseId), null, $token);
+        $target = supabase_request('GET',
+            '/rest/v1/profiles?select=id,linked_profile_id&id=eq.' . urlencode($targetId), null, $token);
+        $baseRow   = $base['body'][0]   ?? null;
+        $targetRow = $target['body'][0] ?? null;
+        if (!$baseRow || !$targetRow) return 'That account could not be found.';
+
+        $linked = ($baseRow['linked_profile_id'] ?? null) === $targetId
+               || ($targetRow['linked_profile_id'] ?? null) === $baseId;
+        if (!$linked) return 'That account is not linked to yours.';
+    }
+
+    $s['sb']['base_user_id'] = $baseId;
+    $s['sb']['user_id']      = $targetId;
+    _save_session();
+    audit_log($token, 'session_switched', 'profile', $targetId,
+        'Session switched from ' . $baseId . ' to ' . $targetId);
+    return null;
 }
 
 // none (no plan yet) | active | grace | terminated
@@ -1286,6 +1387,18 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
             $on = $active === $it['panel'];
             $out .= '<button type="button" class="side-link admin-tab' . ($on ? ' active' : '') . '"'
                 . ($on ? ' aria-current="true"' : '') . ' data-panel="' . e($it['panel']) . '">' . $inner . '</button>';
+        } elseif (!empty($it['post'])) {
+            // POST form styled as a link — for actions that change server
+            // state from the sidebar (e.g. switching to a linked account).
+            $params = '';
+            foreach ($it['params'] ?? [] as $k => $v) {
+                $params .= '<input type="hidden" name="' . e($k) . '" value="' . e((string) $v) . '">';
+            }
+            $out .= '<form class="side-form" method="post" action="' . e($it['href']) . '">'
+                . '<input type="hidden" name="csrf" value="' . e($it['csrf'] ?? '') . '">'
+                . $params
+                . '<button type="submit" class="side-link">' . $inner . '</button>'
+                . '</form>';
         } else {
             $on = $active === $it['href'];
             $out .= '<a class="side-link' . ($on ? ' active' : '') . '"' . ($on ? ' aria-current="page"' : '')

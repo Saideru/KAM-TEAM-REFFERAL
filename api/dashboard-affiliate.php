@@ -9,7 +9,11 @@ require_once __DIR__ . '/lib/ui.php';
 // that gate (see require_role()).
 define('PLAN_GATE_EXEMPT', true);
 
-['token' => $token, 'profile' => $profile] = require_role(['client', 'admin']);
+// Serves three shapes: legacy dual-side members (role='client' with an
+// affiliate tier), standalone Growth Partner rows (role='growth_partner'
+// from the post-20261128 sign-up flow) and admins viewing their own
+// linked Growth Partner row via session switch.
+['token' => $token, 'profile' => $profile] = require_role(['client', 'admin', 'growth_partner']);
 $userId    = $profile['id'];
 $isAdmin   = $profile['role'] === 'admin';
 $unlimited = tier_unlimited($profile);   // admins: a partner account with no term
@@ -136,44 +140,70 @@ $gated      = !$tier && !$pending;
     'csrf'        => $csrf,
     'idle'        => true,
 ]) ?>
+<?php
+// Admins reach this dashboard by switching session into their dedicated
+// Growth Partner row (migration 20261128). So "admin viewing GP" is
+// detected by comparing the base session id to the current profile id,
+// not by the profile's own role (which is now 'growth_partner').
+$switchedFromAdmin = session_base_user_id() !== $profile['id'];
+
+// Topbar switch: the one connective link to the Client side, present only
+// for legacy dual-side members (role='client' with an affiliate tier).
+// Standalone growth_partner rows and switched-in admins have no Client
+// side on this row; affiliate-only legacy members have the "Activate
+// Client account" card on the page instead.
+$topSwitch = null;
+if (!$switchedFromAdmin && $profile['role'] === 'client' && !affiliate_only($profile) && !$gated) {
+    $topSwitch = ['label' => 'Client account', 'href' => '/dashboard-client.php', 'note' => 'KAM Team services'];
+}
+
+$topLinks = [];
+if ($switchedFromAdmin) {
+    // "Back to Admin" switches the session back to the base user.
+    $topLinks[] = [
+        'label'  => '← Back to Admin',
+        'href'   => '/notifications.php',
+        'post'   => true,
+        'params' => ['action' => 'switch', 'to' => session_base_user_id()],
+    ];
+} elseif ($isAdmin) {
+    // Legacy path: an admin who never had their referral slot split off
+    // still lives on the admin row. Direct link back is fine.
+    $topLinks[] = ['label' => '← Admin dashboard', 'href' => '/dashboard-admin.php'];
+}
+?>
 <?= ui_topbar([
     'csrf'       => $csrf,
     'bell'       => notif_bell($token, $profile, $csrf),
-    'role'       => ($isAdmin ? 'Admin' : 'Growth Partner') . ($tier ? ' · ' . tier_label($tier) : ''),
-    'role_class' => $isAdmin ? 'admin' : 'affiliate',
+    'role'       => ($switchedFromAdmin ? 'Admin · Growth Partner' : ($isAdmin ? 'Admin' : 'Growth Partner')) . ($tier ? ' · ' . tier_label($tier) : ''),
+    'role_class' => $switchedFromAdmin || $isAdmin ? 'admin' : 'affiliate',
+    'links'      => $topLinks,
+    'switch'     => $topSwitch,
 ]) ?>
 
 <div class="shell">
 <?php
-// Sidebar items change with the member's state:
-//   gated          - new sign-up, hasn't picked a plan yet.
-//   affiliate-only - Client dashboard is dormant; show "Activate" instead.
-//   dual-side      - the full nav with both accounts.
-$sideBack = $isAdmin
-    ? ['label' => '← Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']
-    : (affiliate_only($profile)
-        ? ['label' => 'Activate Client account', 'href' => '#activate-client', 'icon' => 'brief']
-        : ['label' => '← Client account',        'href' => '/dashboard-client.php', 'icon' => 'brief']);
+// Sidebar is purely Growth Partner content now — no cross-link to the
+// Client dashboard; that lives in the topbar switch above. The only
+// exception: affiliate-only members, whose "Activate Client account"
+// jumps to a card on this same page.
+$extraItems = affiliate_only($profile)
+    ? [['label' => 'Activate Client account', 'href' => '#activate-client', 'icon' => 'brief']]
+    : [];
 ?>
 <?= app_sidebar($gated ? [
     ['label' => 'Choose your plan', 'href' => '#plans',   'icon' => 'box'],
     ['label' => 'Verify ID',        'href' => '/kyc.php', 'icon' => 'id'],
-] : [
-    $sideBack,
+] : array_merge([
+    ['label' => 'Overview',       'href' => '#overview', 'icon' => 'home'],
     ['label' => 'Partner plan',   'href' => '#plans',    'icon' => 'box'],
     ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
     ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
     ['label' => 'Your downline',  'href' => '#network',  'icon' => 'tree'],
     ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
     ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
-], 'Growth Partner') ?>
+], $extraItems), 'Growth Partner') ?>
 <main class="wrap" id="main" tabindex="-1">
-  <?php if (!$gated && ($isAdmin || !affiliate_only($profile))): ?>
-  <nav class="account-switch" aria-label="Account">
-    <a href="<?= $isAdmin ? '/dashboard-admin.php' : '/dashboard-client.php' ?>"><?= $isAdmin ? 'Admin dashboard' : 'Client account' ?></a>
-    <a href="/dashboard-affiliate.php" class="on">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?></small></a>
-  </nav>
-  <?php endif; ?>
   <?= ui_page_title(
         'KAM Growth Partnership Program // ' . e($profile['referral_code'] ?? ''),
         ($gated || isset($_GET['welcome']) ? 'Welcome, ' : '') . $firstName . '.',

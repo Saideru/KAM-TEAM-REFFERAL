@@ -615,7 +615,13 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     ['label' => 'Audit logs',   'panel' => 'logs',         'icon' => 'log'],
     ['label' => 'Recycle bin',  'panel' => 'trash',        'icon' => 'trash', 'count' => $trashCount],
     ['label' => 'Client work →', 'href' => '/work.php',     'icon' => 'check'],
-    ['label' => 'My referral account →', 'href' => '/dashboard-affiliate.php', 'icon' => 'link'],
+    // POSTs to the session switcher — the admin's referral slot now
+    // lives on a dedicated linked Growth Partner row (see migration
+    // 20261128). Switching flips the session to that row so the GP
+    // dashboard renders its own data; "Back to admin" returns here.
+    ['label' => 'My referral account →', 'href' => '/notifications.php', 'icon' => 'link',
+     'post' => true, 'csrf' => $csrf,
+     'params' => ['action' => 'switch', 'to' => $profile['linked_profile_id'] ?? '']],
     ['label' => 'Program docs →', 'href' => '/report.php?doc=components', 'icon' => 'log'],
 ], 'Admin', 'users') ?>
 <main class="wrap" id="main" tabindex="-1">

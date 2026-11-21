@@ -10,7 +10,9 @@ if (supabase_configured() && supabase_access_token()) {
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
 $ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
 $errors = [];
-$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => [], 'account_mode' => 'client'];
+// A visitor landing with ?ref=… was pointed here by a Growth Partner, so
+// pre-select the Growth Partner tile — the kind of account that needs a code.
+$old    = ['username' => '', 'email' => '', 'full_name' => '', 'phone' => '', 'company' => '', 'business_nature' => '', 'business_struggles' => [], 'business_notes' => '', 'terms' => [], 'account_mode' => $ref !== '' ? 'affiliate' : 'client'];
 $notice = flash();
 
 // Fallback copy when the idle watchdog sent the visitor here and the flash
@@ -62,6 +64,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($old['business_nature'] === '')                    $errors[] = 'Tell us the nature of your business.';
         if (!$old['business_struggles'] && $old['business_notes'] === '') $errors[] = 'Pick at least one struggle, or tell us more about what you need.';
+
+        // Growth Partners must sign up through another partner's link, so
+        // every new partner joins an existing downline (Manual §4). Clients
+        // don't carry a code — the field is hidden and ignored for them.
+        if ($old['account_mode'] === 'affiliate' && $ref === '') {
+            $errors[] = 'Enter the referral code of the Growth Partner who invited you — it is required for a Growth Partner account.';
+        }
+        if ($old['account_mode'] === 'client') {
+            $ref = '';
+        }
 
         if ($old['full_name'] === '')                     $errors[] = 'Enter your full name.';
         if (!preg_match('/^[a-z0-9_]{3,20}$/', $username)) $errors[] = 'Username must be 3-20 characters: letters, numbers or underscore.';
@@ -186,15 +198,15 @@ $csrf = csrf_token();
                 <div class="acct-body">
                   <span class="label" style="color:var(--rust)">Client</span>
                   <strong>I want KAM Team services</strong>
-                  <p>Buy service packages (50% advance deposit to start). You also get a <strong>Growth Partner</strong> account that activates when you pick a Basic or Standard plan.</p>
+                  <p>Creates a Client account — buy service packages, 50% advance deposit to start. You can add a Growth Partner account later if you ever want to refer clients.</p>
                 </div>
               </label>
               <label class="acct-tile<?= $old['account_mode'] === 'affiliate' ? ' is-on' : '' ?>">
                 <input type="radio" name="account_mode" value="affiliate" <?= $old['account_mode'] === 'affiliate' ? 'checked' : '' ?>>
                 <div class="acct-body">
-                  <span class="label" style="color:var(--rust)">Growth Partner only</span>
+                  <span class="label" style="color:var(--rust)">Growth Partner</span>
                   <strong>I want to refer clients</strong>
-                  <p>Only a <strong>Growth Partner</strong> account is created. You can activate a Client account later from your partner dashboard whenever you need KAM Team services.</p>
+                  <p>Creates a Growth Partner account — pick Basic (free) or Standard ($100) and start referring. Carries a term and commission; does not buy services on its own.</p>
                 </div>
               </label>
             </div>
@@ -236,10 +248,21 @@ $csrf = csrf_token();
             </div>
           </fieldset>
 
-          <div class="field">
-            <label for="reg-ref">Referral code <span style="opacity:.6">(optional)</span></label>
-            <input id="reg-ref" name="ref" type="text" maxlength="12" style="text-transform:uppercase" value="<?= e($ref) ?>" placeholder="KT-XXXXXX">
-            <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Were you invited? Enter their code so they get credited.</small>
+          <?php
+            // Growth Partners must enter the code of the partner that
+            // referred them (every new partner joins an existing downline).
+            // The field stays hidden for Clients — they can be invited but
+            // the program does not credit a Client to anyone.
+            $refRequired = $old['account_mode'] === 'affiliate';
+          ?>
+          <div class="field ref-field" id="ref-field"<?= $refRequired ? '' : ' hidden' ?>>
+            <label for="reg-ref">Referral code <span class="ref-req" aria-hidden="true">(required)</span></label>
+            <input id="reg-ref" name="ref" type="text" maxlength="12" style="text-transform:uppercase"
+                   value="<?= e($ref) ?>" placeholder="KT-XXXXXX"
+                   autocomplete="off" inputmode="latin"
+                   pattern="[A-Za-z0-9\-]{3,12}"
+                   <?= $refRequired ? 'required aria-required="true"' : '' ?>>
+            <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Enter the code of the Growth Partner who invited you — this credits every referral you make to their network.</small>
           </div>
 
           <?= terms_checklist($old['terms'], '04 // Program terms', 'reg-submit') ?>
@@ -272,14 +295,26 @@ $csrf = csrf_token();
   Array.prototype.forEach.call(document.querySelectorAll('[data-mode]'), function (el) {
     el.addEventListener('click', function () { show(el.dataset.mode); });
   });
-  // Highlight the selected account-type tile.
-  Array.prototype.forEach.call(document.querySelectorAll('.acct-tile input'), function (radio) {
-    radio.addEventListener('change', function () {
-      Array.prototype.forEach.call(document.querySelectorAll('.acct-tile'), function (tile) {
-        tile.classList.toggle('is-on', tile.contains(document.querySelector('.acct-tile input:checked')));
-      });
+  // Highlight the selected account-type tile and show the ref field only
+  // for Growth Partners (who must carry a referral code).
+  var refField = document.getElementById('ref-field');
+  var refInput = document.getElementById('reg-ref');
+  function syncAcctMode() {
+    var checked = document.querySelector('.acct-tile input:checked');
+    var mode = checked ? checked.value : 'client';
+    Array.prototype.forEach.call(document.querySelectorAll('.acct-tile'), function (tile) {
+      tile.classList.toggle('is-on', tile.contains(checked));
     });
+    if (!refField || !refInput) return;
+    var affiliate = mode === 'affiliate';
+    refField.hidden = !affiliate;
+    if (affiliate) refInput.setAttribute('required', '');
+    else refInput.removeAttribute('required');
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.acct-tile input'), function (radio) {
+    radio.addEventListener('change', syncAcctMode);
   });
+  syncAcctMode();
   Array.prototype.forEach.call(document.querySelectorAll('.pw-toggle'), function (btn) {
     btn.addEventListener('click', function () {
       var input = btn.parentElement.querySelector('input');

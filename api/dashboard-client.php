@@ -93,6 +93,13 @@ $contact   = !empty($profile['assigned_admin'])
     'bell'       => notif_bell($token, $profile, $csrf),
     'role'       => 'Client',
     'role_class' => 'client',
+    // Switch to the Growth Partner side. Only link out: the Client
+    // dashboard otherwise shows no partner content at all.
+    'switch'     => [
+        'label' => 'Growth Partner',
+        'href'  => '/dashboard-affiliate.php',
+        'note'  => $profile['affiliate_tier'] ? tier_label($profile['affiliate_tier']) : 'No plan yet',
+    ],
 ]) ?>
 
 <div class="shell">
@@ -102,15 +109,9 @@ $contact   = !empty($profile['assigned_admin'])
     ['label' => 'Work progress',      'href' => '#progress', 'icon' => 'check'],
     ['label' => 'Reports',            'href' => '#reports',  'icon' => 'log'],
     ['label' => 'Your business',      'href' => '#business', 'icon' => 'brief'],
-    ['label' => 'Growth Partner →',   'href' => '/dashboard-affiliate.php', 'icon' => 'link'],
     ['label' => 'Verify ID',          'href' => '/kyc.php',  'icon' => 'id'],
 ], 'Client') ?>
 <main class="wrap" id="main" tabindex="-1">
-  <nav class="account-switch" aria-label="Account">
-    <a href="/dashboard-client.php" class="on">Client account</a>
-    <a href="/dashboard-affiliate.php">Growth Partner <small><?= e($profile['referral_code'] ?? '') ?><?= $profile['affiliate_tier'] ? ' · ' . e(tier_label($profile['affiliate_tier'])) : '' ?></small></a>
-  </nav>
-
   <?= ui_alerts($notice, $errors) ?>
 
   <?= ui_page_title(
