@@ -808,7 +808,7 @@ function remind_basic_expiry(array $p): void
         return;
     }
 
-    $link = '/dashboard-affiliate.php?notice=' . $kind . '-' . date('Ymd', $exp) . '#plans';
+    $link = '/dashboard-affiliate.php?view=plan&notice=' . $kind . '-' . date('Ymd', $exp);
     $sent = supabase_request('GET', '/rest/v1/notifications?select=id&limit=1&user_id=eq.' . urlencode($p['id']) . '&link=eq.' . rawurlencode($link), null, SUPABASE_SERVICE_KEY);
     if (!is_array($sent['body']) || $sent['error'] || $sent['body']) return;   // already sent (or can't tell)
     notify(SUPABASE_SERVICE_KEY, $title, $body, $p['id'], 'all', $link);
@@ -1182,52 +1182,76 @@ function business_card(string $token, array $profile, string $csrf): string
 // =====================================================================
 
 // Referral code + link, commission rule, earnings and the people referred.
-function affiliate_account_html(string $token, array $profile, bool $canRefer = true): string
+// Builds the Growth Partner dashboard pieces. $parts picks which ones, so
+// each sidebar page renders only its own section:
+//   share     the referral code card (Copy copies only the characters after
+//             KT-, which is what the sign-up form asks for)
+//   stats     Referred / Clients / Commissions / Earned tiles
+//   earnings  the commission ledger
+//   network   the downline graph
+function affiliate_account_html(string $token, array $profile, bool $canRefer = true, array $parts = ['share', 'stats', 'earnings', 'network']): string
 {
     $uid  = urlencode($profile['id']);
-    $pct  = commission_pct($token);
-    $link = APP_URL . '/index.php?ref=' . urlencode($profile['referral_code'] ?? '');
+    $code = (string) ($profile['referral_code'] ?? '');
+    $out  = '';
 
-    $refs = supabase_request('GET', '/rest/v1/referrals?select=created_at,status,referred:profiles!referrals_referred_id_fkey(full_name,role)&referrer_id=eq.' . $uid . '&order=created_at.desc', null, $token)['body'] ?? [];
-    $coms = supabase_request('GET', '/rest/v1/transactions?select=amount,created_at,notes,packages(name),source:profiles!transactions_source_user_id_fkey(full_name)&type=eq.commission&status=eq.completed&user_id=eq.' . $uid . '&order=created_at.desc&limit=50', null, $token)['body'] ?? [];
-    $refs = is_array($refs) ? $refs : [];
-    $coms = is_array($coms) ? $coms : [];
-    $earned  = array_sum(array_map(fn($c) => (float) $c['amount'], $coms));
-    $clients = count(array_filter($refs, fn($r) => ($r['referred']['role'] ?? '') === 'client'));
-
-    $out  = '<section class="card" id="share" style="margin-bottom:12px">'
-          . '<span class="label">Your referral code — ' . e($profile['referral_code'] ?? '') . '</span>';
-    if ($canRefer) {
-        $out .= '<div class="share" style="margin-top:8px"><input id="share-link" type="text" readonly value="' . e($link) . '">'
-              . '<button class="btn btn-sm" type="button" data-copy="#share-link">Copy →</button></div>';
-    } else {
-        $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your Growth Partner term has expired. New referrals are not credited until you renew or upgrade.</p>';
-    }
-    $out .= '<p style="margin:10px 0 0;font-size:12px;color:var(--text-dim)">Clients who sign up with your code are credited to you. When a client you referred pays the 50% advance deposit on a service package, you earn <strong>' . e(pct_label($pct)) . '% of that deposit</strong>. Monthly fees and the remaining setup balance are not commissionable, and no income is guaranteed. '
-          . 'Always disclose that you may earn a commission (e.g. "I earn a commission if you hire KAM TEAM through my link").</p></section>';
-
-    $out .= '<section class="grid">'
-          . '<div class="card"><span class="label">Referred</span><div class="big">' . count($refs) . '</div></div>'
-          . '<div class="card"><span class="label">Clients</span><div class="big cyan">' . $clients . '</div></div>'
-          . '<div class="card"><span class="label">Commissions</span><div class="big">' . count($coms) . '</div></div>'
-          . '<div class="card"><span class="label">Earned</span><div class="big green">$' . number_format($earned, 2) . '</div></div></section>';
-
-    $out .= '<section class="card" id="earnings" style="margin-bottom:12px"><h2>Commission ledger</h2>';
-    if (!$coms) {
-        $out .= '<p class="empty">No commissions yet.</p>';
-    } else {
-        $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Commission ledger"><table><thead><tr><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
-        foreach ($coms as $c) {
-            $out .= '<tr><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
-                  . '<td style="color:var(--green)">$' . number_format((float) $c['amount'], 2) . '</td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td></tr>';
+    if (in_array('share', $parts, true)) {
+        $pct    = commission_pct($token);
+        $suffix = preg_replace('/^KT-/', '', $code);
+        $link   = APP_URL . '/index.php?ref=' . urlencode($code);
+        $out .= '<section class="card share-card" id="share" style="margin-bottom:12px">'
+              . '<span class="label">Your referral code</span>';
+        if ($canRefer) {
+            $out .= '<div class="share share-code" style="margin-top:8px">'
+                  .   '<div class="code-box"><span class="code-prefix" aria-hidden="true">KT-</span>'
+                  .   '<input id="share-code" type="text" readonly value="' . e($suffix) . '" aria-label="Referral code, the characters after KT-"></div>'
+                  .   '<button class="btn btn-sm btn-solid" type="button" data-copy="#share-code">Copy code</button></div>'
+                  . '<p class="hint" style="margin:6px 0 0">Sign-ups type these ' . strlen($suffix) . ' characters after the printed <strong>KT-</strong> on the registration form.</p>'
+                  . '<div class="share share-link" style="margin-top:14px"><input id="share-link" type="text" readonly value="' . e($link) . '" aria-label="Referral link">'
+                  .   '<button class="btn btn-sm" type="button" data-copy="#share-link">Copy link</button></div>'
+                  . '<p class="hint" style="margin:6px 0 0">Or share the link — it fills your code in for them.</p>';
+        } else {
+            $out .= '<p class="alert alert-warn" style="margin:8px 0 0">Your Growth Partner term has expired. New referrals are not credited until you renew or upgrade.</p>';
         }
-        $out .= '</tbody></table></div>';
+        $out .= '<p style="margin:14px 0 0;font-size:12px;color:var(--text-dim)">Clients who sign up with your code are credited to you. When a client you referred pays the 50% advance deposit on a service package, you earn <strong>' . e(pct_label($pct)) . '% of that deposit</strong>. Monthly fees and the remaining setup balance are not commissionable, and no income is guaranteed. '
+              . 'Always disclose that you may earn a commission (e.g. "I earn a commission if you hire KAM TEAM through my link").</p></section>';
     }
-    $out .= '</section>';
 
-    $out .= downline_graph_html($token, $profile);
+    if (in_array('stats', $parts, true) || in_array('earnings', $parts, true)) {
+        $refs = supabase_request('GET', '/rest/v1/referrals?select=created_at,status,referred:profiles!referrals_referred_id_fkey(full_name,role)&referrer_id=eq.' . $uid . '&order=created_at.desc', null, $token)['body'] ?? [];
+        $coms = supabase_request('GET', '/rest/v1/transactions?select=amount,created_at,notes,packages(name),source:profiles!transactions_source_user_id_fkey(full_name)&type=eq.commission&status=eq.completed&user_id=eq.' . $uid . '&order=created_at.desc&limit=50', null, $token)['body'] ?? [];
+        $refs = is_array($refs) ? $refs : [];
+        $coms = is_array($coms) ? $coms : [];
+        $earned  = array_sum(array_map(fn($c) => (float) $c['amount'], $coms));
+        $clients = count(array_filter($refs, fn($r) => ($r['referred']['role'] ?? '') === 'client'));
 
-    // The copy button's behaviour lives in assets/js/app.js (copyButtons).
+        if (in_array('stats', $parts, true)) {
+            $out .= '<section class="grid">'
+                  . '<div class="card"><span class="label">Referred</span><div class="big">' . count($refs) . '</div></div>'
+                  . '<div class="card"><span class="label">Clients</span><div class="big cyan">' . $clients . '</div></div>'
+                  . '<div class="card"><span class="label">Commissions</span><div class="big">' . count($coms) . '</div></div>'
+                  . '<div class="card"><span class="label">Earned</span><div class="big green">$' . number_format($earned, 2) . '</div></div></section>';
+        }
+
+        if (in_array('earnings', $parts, true)) {
+            $out .= '<section class="card" id="earnings" style="margin-bottom:12px"><h2>Commission ledger</h2>';
+            if (!$coms) {
+                $out .= '<p class="empty">No commissions yet.</p>';
+            } else {
+                $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Commission ledger"><table><thead><tr><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
+                foreach ($coms as $c) {
+                    $out .= '<tr><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
+                          . '<td style="color:var(--green)">$' . number_format((float) $c['amount'], 2) . '</td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td></tr>';
+                }
+                $out .= '</tbody></table></div>';
+            }
+            $out .= '</section>';
+        }
+    }
+
+    if (in_array('network', $parts, true)) $out .= downline_graph_html($token, $profile);
+
+    // The copy buttons' behaviour lives in assets/js/app.js (copyButtons).
     return $out;
 }
 
@@ -1591,6 +1615,48 @@ function kyc_banner(array $profile): string
         'rejected' => '<div class="alert alert-error">Your identity check was not approved. <a href="/kyc.php">Submit again →</a></div>',
         default    => '<div class="alert alert-warn">Your account is not verified yet. <a href="/kyc.php">Verify your identity →</a></div>',
     };
+}
+
+// The "Verify ID" section on the Growth Partner dashboard (#verify): status,
+// what was submitted, and the button to /kyc.php where the form lives.
+function kyc_section(string $token, array $profile): string
+{
+    $status = $profile['kyc_status'] ?? 'not_submitted';
+    $kyc    = $status !== 'not_submitted' ? kyc_submission($token, $profile['id']) : null;
+    [$label, $pill] = [
+        'not_submitted' => ['Not verified', 'pending'],
+        'pending'       => ['In review',    'pending'],
+        'approved'      => ['Verified',     'active'],
+        'rejected'      => ['Rejected',     'failed'],
+    ][$status] ?? ['Not verified', 'pending'];
+
+    $msg = match ($status) {
+        'approved' => 'Your identity is verified. Nothing further is needed.',
+        'pending'  => 'Your documents were submitted' . (!empty($kyc['created_at']) ? ' on ' . date('M j, Y', strtotime($kyc['created_at'])) : '') . ' and an admin is reviewing them.',
+        'rejected' => ($kyc['note'] ?? '') !== '' ? 'Not approved: ' . $kyc['note'] . ' Correct the details and submit again.' : 'Your documents could not be verified. Correct the details and submit again.',
+        default    => 'Verify a government ID to confirm your Growth Partner account (Manual §9.1). It is required before you can buy the Standard plan.',
+    };
+    $btn = match ($status) {
+        'approved' => '<a class="btn btn-sm" href="/kyc.php">View details</a>',
+        'pending'  => '<a class="btn btn-sm" href="/kyc.php">View submission</a>',
+        'rejected' => '<a class="btn btn-sm btn-solid" href="/kyc.php">Submit again →</a>',
+        default    => '<a class="btn btn-sm btn-solid" href="/kyc.php">Verify my ID →</a>',
+    };
+    $rows = '';
+    if ($kyc) {
+        $rows = '<div class="profile-info" style="margin-top:12px">'
+            . '<div class="profile-row"><span class="label">Legal name</span><span>' . e($kyc['legal_name'] ?? '') . '</span></div>'
+            . '<div class="profile-row"><span class="label">ID type</span><span>' . e(KYC_ID_TYPES[$kyc['id_type'] ?? ''] ?? ($kyc['id_type'] ?? '')) . '</span></div>'
+            . '</div>';
+    }
+
+    return '<section class="card" id="verify" style="margin-top:20px">'
+        . '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'
+        .   '<h2 style="margin:0">Verify ID</h2><span class="pill ' . e($pill) . '">' . e($label) . '</span></div>'
+        . '<p style="margin:10px 0 0;font-size:13px;color:var(--text-dim)">' . e($msg) . '</p>'
+        . $rows
+        . '<div style="margin-top:14px">' . $btn . '</div>'
+        . '</section>';
 }
 
 // Validates an uploaded image and returns it as a data URI.

@@ -8,7 +8,12 @@ if (supabase_configured() && supabase_access_token()) {
 }
 
 $mode   = ($_GET['mode'] ?? '') === 'register' ? 'register' : 'login';
-$ref    = strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? '')));
+// The form prints "KT-" as a fixed prefix, so the user types only the
+// number. Accept either form ("000001" or a pasted "KT-000001") and always
+// rebuild the full code.
+$refSuffix = preg_replace('/^KT-?/', '', strtoupper(preg_replace('/[^A-Za-z0-9-]/', '', (string) ($_GET['ref'] ?? $_POST['ref'] ?? ''))));
+$refSuffix = str_replace('-', '', $refSuffix);
+$ref    = $refSuffix === '' ? '' : 'KT-' . $refSuffix;
 $errors = [];
 // A visitor landing with ?ref=… was pointed here by a Growth Partner, so
 // pre-select the Growth Partner tile — the kind of account that needs a code.
@@ -231,7 +236,7 @@ $csrf = csrf_token();
             <div class="field"><label for="reg-company">Company</label><input id="reg-company" name="company" type="text" autocomplete="organization" value="<?= e($old['company']) ?>"></div>
           </div>
           <div class="row">
-            <div class="field"><label for="reg-password">Password</label><div class="pw-wrap"><input id="reg-password" name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Min 8 chars"><button type="button" class="pw-toggle">Show</button></div></div>
+            <div class="field"><label for="reg-password">Password</label><div class="pw-wrap"><input id="reg-password" name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Min 8 chars"><button type="button" class="pw-toggle" aria-label="Show password">Show</button></div></div>
             <div class="field"><label for="reg-password2">Confirm</label><input id="reg-password2" name="password_confirm" type="password" autocomplete="new-password" minlength="8" required placeholder="••••••••"></div>
           </div>
 
@@ -268,12 +273,15 @@ $csrf = csrf_token();
           ?>
           <div class="field ref-field" id="ref-field"<?= $refRequired ? '' : ' hidden' ?>>
             <label for="reg-ref">Referral code <span class="ref-req" aria-hidden="true">(required)</span></label>
-            <input id="reg-ref" name="ref" type="text" maxlength="12" style="text-transform:uppercase"
-                   value="<?= e($ref) ?>" placeholder="KT-XXXXXX"
-                   autocomplete="off" inputmode="latin"
-                   pattern="[A-Za-z0-9\-]{3,12}"
-                   <?= $refRequired ? 'required aria-required="true"' : '' ?>>
-            <small style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Enter the code of the Growth Partner who invited you — this credits every referral you make to their network.</small>
+            <div class="ref-wrap">
+              <span class="ref-prefix" aria-hidden="true">KT-</span>
+              <input id="reg-ref" name="ref" type="text" maxlength="9"
+                     value="<?= e($ref === '' ? '' : substr($ref, 3)) ?>" placeholder="000001"
+                     autocomplete="off" inputmode="latin" aria-describedby="ref-hint"
+                     pattern="(KT-?|kt-?)?[A-Za-z0-9]{3,9}" title="The characters after KT-, e.g. 000001"
+                     <?= $refRequired ? 'required aria-required="true"' : '' ?>>
+            </div>
+            <small id="ref-hint" style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Type only the characters after KT- (e.g. 000001). Enter the code of the Growth Partner who invited you — this credits every referral you make to their network.</small>
           </div>
 
           <?= terms_checklist($old['terms'], '04 // Program terms', 'reg-submit') ?>
@@ -315,6 +323,12 @@ $csrf = csrf_token();
   var refField = document.getElementById('ref-field');
   var refInput = document.getElementById('reg-ref');
   var bizField = document.getElementById('biz-fieldset');
+  // KT- is printed in front of the box: uppercase as they type and drop a
+  // pasted KT- prefix so the code is never doubled.
+  if (refInput) refInput.addEventListener('input', function () {
+    var v = refInput.value.toUpperCase().replace(/^KT-?/, '').replace(/[^A-Z0-9]/g, '');
+    if (v !== refInput.value) refInput.value = v;
+  });
   function syncAcctMode() {
     var checked = document.querySelector('.acct-tile input:checked');
     var affiliate = (checked ? checked.value : 'client') === 'affiliate';
@@ -339,12 +353,19 @@ $csrf = csrf_token();
   });
   syncAcctMode();
   Array.prototype.forEach.call(document.querySelectorAll('.pw-toggle'), function (btn) {
+    // Wire once only: app.js skips buttons marked here, so one click is not
+    // handled twice (which flipped the field straight back to dots).
+    if (btn.dataset.pwWired) return;
+    btn.dataset.pwWired = '1';
+    btn.setAttribute('aria-pressed', 'false');
     btn.addEventListener('click', function () {
       var input = btn.parentElement.querySelector('input');
       if (!input) return;
       var visible = input.type === 'text';
       input.type = visible ? 'password' : 'text';
       btn.textContent = visible ? 'Show' : 'Hide';
+      btn.setAttribute('aria-pressed', visible ? 'false' : 'true');
+      btn.setAttribute('aria-label', (visible ? 'Show' : 'Hide') + ' password');
     });
   });
 })();

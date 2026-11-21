@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         if (!$res['error']) {
             audit_log($token, 'payment_cancelled', 'transaction', $pending['id'], 'User cancelled plan request');
             flash('success', 'Request cancelled.');
-            header('Location: /dashboard-affiliate.php'); exit;
+            header('Location: /dashboard-affiliate.php?view=plan'); exit;
         }
         $errors[] = 'Could not cancel the request.';
     }
@@ -183,31 +183,45 @@ if ($switchedFromAdmin) {
 
 <div class="shell">
 <?php
-// Sidebar is purely Growth Partner content now — no cross-link to the
-// Client dashboard; that lives in the topbar switch above. The only
-// exception: affiliate-only members, whose "Activate Client account"
-// jumps to a card on this same page.
-$extraItems = affiliate_only($profile)
-    ? [['label' => 'Activate Client account', 'href' => '#activate-client', 'icon' => 'brief']]
-    : [];
+// Sidebar is purely Growth Partner content — no cross-link to the Client
+// dashboard; that lives in the topbar switch above. Affiliate-only members
+// also get an "Activate Client account" page.
+// "Your business" belongs to the Client side. A Growth Partner account has
+// no business details (registration does not ask for them), so only a
+// legacy dual-side member (role client) still sees it here.
+$hasBusiness = $profile['role'] === 'client';
+// Each sidebar item is its own page (?view=…): the server renders only that
+// section, so nothing is one long scrolling page with anchors.
+$base  = '/dashboard-affiliate.php';
+$pages = [
+    'overview' => ['label' => 'Overview',      'icon' => 'home', 'title' => 'Overview'],
+    'plan'     => ['label' => 'Partner plan',  'icon' => 'box',  'title' => 'Your partner plan'],
+    'share'    => ['label' => 'Referral link', 'icon' => 'link', 'title' => 'Your referral code'],
+    'earnings' => ['label' => 'Earnings',      'icon' => 'cash', 'title' => 'Earnings'],
+    'network'  => ['label' => 'Your downline', 'icon' => 'tree', 'title' => 'Your downline'],
+];
+if (!$isAdmin && !$switchedFromAdmin) $pages['verify']   = ['label' => 'Verify ID',               'icon' => 'id',    'title' => 'Verify your ID'];
+if ($hasBusiness)                     $pages['business'] = ['label' => 'Your business',           'icon' => 'brief', 'title' => 'Your business'];
+if (affiliate_only($profile))         $pages['activate'] = ['label' => 'Activate Client account', 'icon' => 'brief', 'title' => 'Client account'];
+
+$view = (string) ($_GET['view'] ?? 'overview');
+if ($gated || !isset($pages[$view])) $view = $gated ? 'plan' : 'overview';
+$canRefer = !in_array($state, ['grace', 'terminated'], true);
+
+$navItems = [];
+foreach ($pages as $key => $pg) {
+    $navItems[] = ['label' => $pg['label'], 'href' => $base . '?view=' . $key, 'icon' => $pg['icon']];
+}
 ?>
 <?= app_sidebar($gated ? [
-    ['label' => 'Choose your plan', 'href' => '#plans',   'icon' => 'box'],
-    ['label' => 'Verify ID',        'href' => '/kyc.php', 'icon' => 'id'],
-] : array_merge([
-    ['label' => 'Overview',       'href' => '#overview', 'icon' => 'home'],
-    ['label' => 'Partner plan',   'href' => '#plans',    'icon' => 'box'],
-    ['label' => 'Referral link',  'href' => '#share',    'icon' => 'link'],
-    ['label' => 'Earnings',       'href' => '#earnings', 'icon' => 'cash'],
-    ['label' => 'Your downline',  'href' => '#network',  'icon' => 'tree'],
-    ['label' => 'Your business',  'href' => '#business', 'icon' => 'brief'],
-    ['label' => 'Verify ID',      'href' => '/kyc.php',  'icon' => 'id'],
-], $extraItems), 'Growth Partner') ?>
+    ['label' => 'Choose your plan', 'href' => $base . '?view=plan', 'icon' => 'box'],
+    ['label' => 'Verify ID',        'href' => '/kyc.php',           'icon' => 'id'],
+] : $navItems, 'Growth Partner', $gated ? $base . '?view=plan' : $base . '?view=' . $view) ?>
 <main class="wrap" id="main" tabindex="-1">
   <?= ui_page_title(
         'KAM Growth Partnership Program // ' . e($profile['referral_code'] ?? ''),
-        ($gated || isset($_GET['welcome']) ? 'Welcome, ' : '') . $firstName . '.',
-        $tier ? 'Refer clients, earn commission.' : 'Choose your plan.'
+        ($gated || isset($_GET['welcome']) ? 'Welcome, ' . $firstName . '.' : ($view === 'overview' ? 'Hi, ' . $firstName . '.' : $pages[$view]['title'] . '.')),
+        $gated ? 'Choose your plan.' : ($view === 'overview' ? 'Refer clients, earn commission.' : '')
   ) ?>
   <?php if ($gated): ?>
     <?php $onlyAffiliate = affiliate_only($profile); ?>
@@ -218,9 +232,9 @@ $extraItems = affiliate_only($profile)
   <?php endif; ?>
 
   <?= ui_alerts($notice, $errors) ?>
-  <?= kyc_banner($profile) ?>
+  <?= $gated ? kyc_banner($profile) : '' ?>
 
-  <?php if (!$gated && affiliate_only($profile)): ?>
+  <?php if (!$gated && $view === 'activate'): ?>
     <section class="card activate-card" id="activate-client" style="margin-bottom:16px">
       <span class="label"><span class="dot" style="background:var(--orange)"></span>Client account // dormant</span>
       <h2 style="margin:6px 0 4px">Also want KAM Team services?</h2>
@@ -243,17 +257,19 @@ $extraItems = affiliate_only($profile)
       New referrals are not credited until you take Standard for US$100 (+3 months + 2 years). Your Client account is unaffected.</div>
   <?php elseif ($state === 'active' && $tier === 'basic' && ($daysLeft = (int) ceil((strtotime($profile['lifecycle_expires_at']) - time()) / 86400)) <= EXPIRY_NOTICE_DAYS): ?>
     <div class="alert alert-warn"><strong>Only <?= $daysLeft ?> day<?= $daysLeft === 1 ? '' : 's' ?> left on your Basic account</strong> (ends <?= date('M j, Y', strtotime($profile['lifecycle_expires_at'])) ?>).
-      To keep it, find a client — when a client you referred pays their deposit you get +3 months — or <a href="#plans">upgrade to Standard for US$100</a> (+2 years).</div>
+      To keep it, find a client — when a client you referred pays their deposit you get +3 months — or <a href="/dashboard-affiliate.php?view=plan">upgrade to Standard for US$100</a> (+2 years).</div>
   <?php endif; ?>
 
+  <?php if ($view === 'overview' || $view === 'plan'): ?>
   <?php if ($unlimited): ?>
     <div class="card countdown-card" id="overview"><span class="label">Unlimited Growth Partner account</span>
       <p style="margin:8px 0 0;font-size:13px;color:var(--text-muted)">Your partner account never expires — there is no plan to buy and nothing to renew. You earn commission on every client you refer, like any Growth Partner.</p></div>
   <?php elseif ($tier): ?>
     <div id="overview"><?= lifecycle_countdown($profile, tier_label($tier) . ' Growth Partner term // +3 months per Qualified Client') ?></div>
   <?php endif; ?>
+  <?php endif; ?>
 
-  <?php if (!$unlimited): ?>
+  <?php if (!$unlimited && $view === 'plan'): ?>
   <section id="plans" style="margin-bottom:20px">
     <?= ui_terminal_head('partner_plan.sh // ' . ($tier ? 'Your plan: ' . tier_label($tier) : 'Choose your Growth Partner plan')) ?>
     <div class="terminal-body">
@@ -337,8 +353,24 @@ $extraItems = affiliate_only($profile)
   <?php endif; ?>
 
   <?php if (!$gated): ?>
-    <?= affiliate_account_html($token, $profile, !in_array($state, ['grace', 'terminated'], true)) ?>
-    <?php if (!$isAdmin): ?><div style="margin-top:20px"><?= business_card($token, $profile, $csrf) ?></div><?php endif; ?>
+    <?php if ($view === 'overview'): ?>
+      <?= affiliate_account_html($token, $profile, $canRefer, ['stats']) ?>
+      <nav class="quick-grid" aria-label="Growth Partner pages">
+        <?php foreach ($pages as $key => $pg): if ($key === 'overview') continue; ?>
+          <a class="card quick-card" href="<?= e($base . '?view=' . $key) ?>"><span class="label"><?= e($pg['label']) ?></span><span class="quick-go" aria-hidden="true">→</span></a>
+        <?php endforeach; ?>
+      </nav>
+    <?php elseif ($view === 'share'): ?>
+      <?= affiliate_account_html($token, $profile, $canRefer, ['share']) ?>
+    <?php elseif ($view === 'earnings'): ?>
+      <?= affiliate_account_html($token, $profile, $canRefer, ['stats', 'earnings']) ?>
+    <?php elseif ($view === 'network'): ?>
+      <?= affiliate_account_html($token, $profile, $canRefer, ['network']) ?>
+    <?php elseif ($view === 'verify'): ?>
+      <?= kyc_section($token, $profile) ?>
+    <?php elseif ($view === 'business'): ?>
+      <?= business_card($token, $profile, $csrf) ?>
+    <?php endif; ?>
   <?php endif; ?>
 </main>
 </div>

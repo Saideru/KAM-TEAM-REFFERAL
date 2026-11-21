@@ -5,7 +5,9 @@ require_once __DIR__ . '/lib/supabase.php';
 $token   = require_login();
 $profile = current_profile($token);
 $back    = $_SERVER['HTTP_REFERER'] ?? '/index.php';
-$back    = (parse_url($back, PHP_URL_PATH) ?: '/index.php') . '#business';   // same-site path only
+$path    = parse_url($back, PHP_URL_PATH) ?: '/index.php';   // same-site path only
+// The partner dashboard shows the business card on its own page.
+$back    = $path === '/dashboard-affiliate.php' ? $path . '?view=business' : $path . '#business';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !$profile || !csrf_check()) {
     header('Location: ' . $back); exit;

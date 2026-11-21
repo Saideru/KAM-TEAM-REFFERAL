@@ -7,7 +7,7 @@ require_once __DIR__ . '/lib/ui.php';
 // approved identity documents.
 define('PLAN_GATE_EXEMPT', true);
 
-['token' => $token, 'profile' => $profile] = require_role('client');
+['token' => $token, 'profile' => $profile] = require_role(['client', 'growth_partner']);
 $userId = $profile['id'];
 $errors = [];
 $notice = flash();

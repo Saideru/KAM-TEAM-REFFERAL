@@ -22,8 +22,20 @@ $txnStatusOptions = ['pending', 'completed', 'failed', 'reversed'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $act = $_POST['admin_action'] ?? '';
+    // One "Set" per row in All users posts both pickers as update_account;
+    // only the ones that actually changed are applied, through the same
+    // role / status rules below.
+    $batch = [];
+    $done  = [];
+    if ($act === 'update_account') {
+        $uid = (string) ($_POST['user_id'] ?? '');
+        $cur = $uid ? (supabase_request('GET', '/rest/v1/profiles?select=role,status&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null) : null;
+        if ($cur && isset($_POST['new_role']) && $_POST['new_role'] !== $cur['role']) $batch[] = 'change_role';
+        if ($cur && isset($_POST['new_status']) && $_POST['new_status'] !== $cur['status']) $batch[] = 'change_status';
+        if ($cur && !$batch) { flash('success', 'Nothing changed.'); $back('users'); exit; }
+    }
 
-    if ($act === 'change_role') {
+    if ($act === 'change_role' || in_array('change_role', $batch, true)) {
         $uid  = $_POST['user_id'] ?? '';
         $role = in_array($_POST['new_role'] ?? '', $roleOptions, true) ? $_POST['new_role'] : null;
         $cur = $uid ? (supabase_request('GET', '/rest/v1/profiles?select=role,affiliate_tier&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null) : null;
@@ -46,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             if (!$res['error']) {
                 audit_log($token, 'role_change', 'profile', $uid, 'Changed role to ' . $role);
                 notify($token, 'Your account type changed', 'An admin moved your account to ' . role_name($role) . '.', $uid);
-                flash('success', 'Role updated.'); header('Location: /dashboard-admin.php#users'); exit;
+                $done[] = 'Role updated.';
             }
             $errors[] = db_error_message($res['error']);
         }
@@ -61,24 +73,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $errors[] = $err;
     }
 
-    if ($act === 'change_status') {
+    if (($act === 'change_status' || in_array('change_status', $batch, true)) && !$errors) {
         $uid    = $_POST['user_id'] ?? '';
         $status = in_array($_POST['new_status'] ?? '', $statusOptions, true) ? $_POST['new_status'] : null;
         $target = $uid ? (supabase_request('GET', '/rest/v1/profiles?select=role,status,lifecycle_expires_at&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null) : null;
         if ($target && $status === 'accepted' && in_array($target['status'], ['pending', 'rejected'], true)) {
             // Accepting an application goes through the approval-wall flow.
-            if (!($err = approve_application($token, $uid))) { flash('success', 'Application approved.'); $back('users'); exit; }
-            $errors[] = $err;
+            if (!($err = approve_application($token, $uid))) $done[] = 'Application approved.';
+            else $errors[] = $err;
         } elseif ($target && $status) {
             $patch = ['status' => $status];
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), $patch, $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'status_change', 'profile', $uid, 'Status → ' . $status);
                 if ($status === 'suspended') notify($token, 'Account suspended', 'Your account was suspended by an admin.', $uid);
-                flash('success', 'Status updated.'); $back('users'); exit;
+                $done[] = 'Status updated.';
+            } else {
+                $errors[] = $res['error'];
             }
-            $errors[] = $res['error'];
         }
+    }
+
+    if ($done) {
+        // One flash slot: a partial save reports what worked and what did not.
+        if ($errors) flash('error', implode(' ', $done) . ' But: ' . implode(' ', $errors));
+        else flash('success', implode(' ', $done));
+        $back('users'); exit;
     }
 
     if ($act === 'soft_delete') {
@@ -724,46 +744,60 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       </div>
       <p class="filter-empty hint" id="users-table-empty" hidden>No accounts of this type yet.</p>
 
-      <div class="table-scroll" tabindex="0" role="region" aria-label="All users"><table id="users-table">
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Lifecycle</th><th>Code</th><th>Actions</th></tr></thead>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="All users"><table id="users-table" class="users-table">
+        <thead><tr><th scope="col">Account</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Lifecycle</th><th scope="col">Code</th><th scope="col" class="ut-actions-h">Actions</th></tr></thead>
         <tbody>
         <?php foreach ($liveProfiles as $p):
           $linkedRole = ($byId[$p['linked_profile_id'] ?? ''] ?? [])['role'] ?? null;
           $teamGp     = is_team_partner($p, $linkedRole ?? '');
           $linkedTo   = $linkedName($p);
+          $isMe       = $p['id'] === $adminId;
+          $formId     = 'ua-' . $p['id'];
         ?>
-          <tr data-types="<?= e(implode(' ', $typesOf($p))) ?>">
-            <td><strong><?= e($p['full_name']) ?></strong></td>
-            <td style="font-size:12px"><?= e($p['username']) ?><?php if (!empty($p['email'])): ?><br><span style="font-size:11px;color:var(--text-dim)"><?= e($p['email']) ?></span><?php endif; ?></td>
+          <tr data-types="<?= e(implode(' ', $typesOf($p))) ?>"<?= $isMe ? ' class="is-me"' : '' ?>>
+            <td class="ut-account">
+              <span class="ut-avatar" aria-hidden="true"><?= e(strtoupper(mb_substr((string) $p['full_name'], 0, 1)) ?: '?') ?></span>
+              <span class="ut-id">
+                <strong><?= e($p['full_name']) ?></strong><?= $isMe ? ' <span class="ut-you">you</span>' : '' ?>
+                <span class="ut-sub">@<?= e($p['username']) ?></span>
+                <?php if (!empty($p['email'])): ?><span class="ut-sub ut-mail"><?= e($p['email']) ?></span><?php endif; ?>
+              </span>
+            </td>
             <td>
               <span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span>
               <?php if ($p['role'] === 'growth_partner'): ?>
-                <br><span class="hint"><?= e(tier_label($p['affiliate_tier'] ?? null)) ?><?= $linkedTo ? ' · linked to ' . e($linkedTo) : '' ?></span>
+                <span class="ut-sub"><?= e(tier_label($p['affiliate_tier'] ?? null)) ?><?= $linkedTo ? ' · linked to @' . e($linkedTo) : '' ?></span>
               <?php elseif ($p['role'] === 'client' && !empty($p['affiliate_tier'])): ?>
-                <br><span class="hint">+ Growth Partner · <?= e(tier_label($p['affiliate_tier'])) ?></span>
+                <span class="ut-sub">+ Growth Partner · <?= e(tier_label($p['affiliate_tier'])) ?></span>
               <?php elseif ($linkedTo): ?>
-                <br><span class="hint">Partner account: <?= e($linkedTo) ?></span>
+                <span class="ut-sub">Partner account: @<?= e($linkedTo) ?></span>
               <?php endif; ?>
             </td>
-            <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p, $teamGp) ? '<br><span class="hint" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
-            <td style="font-size:12px">
+            <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p, $teamGp) ? '<span class="ut-sub" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
+            <td class="ut-life">
               <?php if (in_array($p['role'], ['admin', 'staff'], true)): ?>Permanent
-              <?php elseif ($p['role'] === 'growth_partner' && tier_unlimited($p)): ?>Lifetime<br><span class="hint">Unlimited · never expires</span>
+              <?php elseif ($p['role'] === 'growth_partner' && tier_unlimited($p)): ?>Lifetime<span class="ut-sub">Unlimited · never expires</span>
               <?php elseif (empty($p['lifecycle_expires_at'])): ?><?= $p['role'] === 'growth_partner' ? 'No plan yet' : 'Client permanent' ?>
-              <?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? '<br><span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?>
+              <?php else: $st = affiliate_state($p); ?>Partner to <?= date('M j, Y', strtotime($p['lifecycle_expires_at'])) ?><?= $st !== 'active' ? ' <span class="pill ' . ($st === 'grace' ? 'pending' : 'failed') . '">' . e($st) . '</span>' : '' ?>
               <?php endif; ?>
             </td>
-            <td style="font-size:11px"><?= e($p['referral_code'] ?? '') ?: '<span class="hint">—</span>' ?></td>
-            <td>
-              <div style="display:flex;gap:4px;flex-wrap:wrap">
-                <a class="btn btn-sm" href="/dashboard-admin.php?edit_user=<?= e($p['id']) ?>#users">Edit</a>
-                <?php if ($p['id'] === $adminId): ?>
-                  <span class="hint" style="align-self:center" title="Ask another admin to change your role">Your account</span>
+            <td><?= !empty($p['referral_code']) ? '<span class="ref-code">' . e($p['referral_code']) . '</span>' : '<span class="hint">—</span>' ?></td>
+            <td class="ut-actions">
+              <form method="post" class="ut-set" id="<?= e($formId) ?>">
+                <input type="hidden" name="csrf" value="<?= e($csrf) ?>">
+                <input type="hidden" name="admin_action" value="update_account">
+                <input type="hidden" name="user_id" value="<?= e($p['id']) ?>">
+                <?php if ($isMe): ?>
+                  <span class="ut-locked" title="Ask another admin to change your role">Role locked</span>
                 <?php else: $choices = $p['role'] === 'admin' ? ADMIN_ROLE_TARGETS : $roleOptions; ?>
-                <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_role"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_role" <?= $p['role'] === 'admin' ? 'title="An admin can only step down to Staff"' : '' ?>><?php foreach ($choices as $ro): ?><option value="<?= e($ro) ?>" <?= $p['role'] === $ro ? 'selected' : '' ?>><?= e(role_name($ro)) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
+                  <select name="new_role" aria-label="Account type for <?= e($p['username']) ?>"<?= $p['role'] === 'admin' ? ' title="An admin can only step down to Staff"' : '' ?>><?php foreach ($choices as $ro): ?><option value="<?= e($ro) ?>" <?= $p['role'] === $ro ? 'selected' : '' ?>><?= e(role_name($ro)) ?></option><?php endforeach; ?></select>
                 <?php endif; ?>
-                <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="change_status"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><select name="new_status"><?php foreach ($statusOptions as $so): ?><option <?= $p['status'] === $so ? 'selected' : '' ?>><?= e($so) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Set</button></form>
-                <form method="post" class="inline-form" onsubmit="return confirm('Soft-delete this user?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="soft_delete"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Trash</button></form>
+                <select name="new_status" aria-label="Status for <?= e($p['username']) ?>"><?php foreach ($statusOptions as $so): ?><option value="<?= e($so) ?>" <?= $p['status'] === $so ? 'selected' : '' ?>><?= e(ucfirst($so)) ?></option><?php endforeach; ?></select>
+                <button class="btn btn-sm btn-solid" type="submit">Set</button>
+              </form>
+              <div class="ut-row">
+                <a class="btn btn-sm" href="/dashboard-admin.php?edit_user=<?= e($p['id']) ?>#users">Edit</a>
+                <form method="post" class="inline-form" onsubmit="return confirm('Move @<?= e($p['username']) ?> to the recycle bin?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="soft_delete"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm btn-danger" type="submit">Trash</button></form>
               </div>
             </td>
           </tr>

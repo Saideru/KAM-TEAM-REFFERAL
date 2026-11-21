@@ -62,6 +62,8 @@
    * ---------------------------------------------------------------- */
   function passwordToggles() {
     $$('.pw-toggle').forEach(function (btn) {
+      if (btn.dataset.pwWired) return;   // already wired by a page fallback
+      btn.dataset.pwWired = '1';
       btn.setAttribute('aria-pressed', 'false');
       on(btn, 'click', function () {
         var input = btn.parentElement.querySelector('input');
