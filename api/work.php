@@ -285,12 +285,27 @@ if ($view === 'report') {
 ]) ?>
 
 <div class="shell">
-<?= app_sidebar(array_merge($isAdmin ? [['label' => 'Admin dashboard', 'href' => '/dashboard-admin.php', 'icon' => 'home']] : [], [
-    ['label' => 'Task tracker',    'href' => '/work.php',            'icon' => 'check'],
-    ['label' => 'Client reports',  'href' => '/work.php?view=reports', 'icon' => 'log'],
-    ['label' => 'Payouts',         'href' => '/work.php?view=payouts', 'icon' => 'cash'],
-    ['label' => 'Program docs →',  'href' => '/report.php?doc=components', 'icon' => 'brief'],
-]),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : ($view === 'payouts' ? '/work.php?view=payouts' : '/work.php')) ?>
+<?= app_sidebar(array_merge(
+    $isAdmin ? [['label' => 'Admin dashboard', 'icon' => 'home', 'drawer' => 'admin-dash', 'children' => [
+        ['label' => 'Users',             'href' => '/dashboard-admin.php#users',        'icon' => 'users'],
+        ['label' => 'Approvals',         'href' => '/dashboard-admin.php#approvals',    'icon' => 'check'],
+        ['label' => 'KYC',               'href' => '/dashboard-admin.php#kyc',          'icon' => 'id'],
+        ['label' => 'Referral pipeline', 'href' => '/dashboard-admin.php#pipeline',     'icon' => 'check'],
+        ['label' => 'Referral network',  'href' => '/dashboard-admin.php#referrals',    'icon' => 'tree'],
+        ['label' => 'Client payments',   'href' => '/dashboard-admin.php#clientpay',    'icon' => 'cash'],
+        ['label' => 'Payouts',           'href' => '/dashboard-admin.php#payouts',      'icon' => 'cash'],
+        ['label' => 'Transactions',      'href' => '/dashboard-admin.php#transactions', 'icon' => 'log'],
+        ['label' => 'Audit logs',        'href' => '/dashboard-admin.php#logs',         'icon' => 'log'],
+    ]]] : [],
+    side_group('Work', 'check', 'work', [
+        ['label' => 'Task tracker',   'href' => '/work.php',              'icon' => 'check'],
+        ['label' => 'Client reports', 'href' => '/work.php?view=reports', 'icon' => 'log'],
+    ]),
+    [
+        ['label' => 'Payouts',      'href' => '/work.php?view=payouts',     'icon' => 'cash'],
+        ['label' => 'Program docs', 'href' => '/report.php?doc=components', 'icon' => 'brief'],
+    ]
+),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : ($view === 'payouts' ? '/work.php?view=payouts' : '/work.php')) ?>
 <main class="wrap" id="main" tabindex="-1">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>
   <h1>Client work. <span class="accent">Traceable, verified, reported.</span></h1>

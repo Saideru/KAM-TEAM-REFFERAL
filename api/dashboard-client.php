@@ -107,15 +107,19 @@ $contact   = !empty($profile['assigned_admin'])
 ]) ?>
 
 <div class="shell">
-<?= app_sidebar([
-    ['label' => 'Overview',           'href' => '#overview', 'icon' => 'home'],
-    ['label' => 'Service packages',   'href' => '#packages', 'icon' => 'box'],
-    ['label' => 'Work progress',      'href' => '#progress', 'icon' => 'check'],
-    ['label' => 'Reports',            'href' => '#reports',  'icon' => 'log'],
-    ['label' => 'Your client code',   'href' => '#client-code', 'icon' => 'link'],
-    ['label' => 'Your business',      'href' => '#business', 'icon' => 'brief'],
-    ['label' => 'Verify ID',          'href' => '/kyc.php',  'icon' => 'id'],
-], 'Client') ?>
+<?= app_sidebar(array_merge(
+    [['label' => 'Overview', 'href' => '#overview', 'icon' => 'home']],
+    side_group('My services', 'box', 'services', [
+        ['label' => 'Service packages', 'href' => '#packages', 'icon' => 'box'],
+        ['label' => 'Work progress',    'href' => '#progress', 'icon' => 'check'],
+        ['label' => 'Reports',          'href' => '#reports',  'icon' => 'log'],
+    ]),
+    side_group('Account', 'user', 'account', [
+        ['label' => 'Your client code', 'href' => '#client-code', 'icon' => 'link'],
+        ['label' => 'Your business',    'href' => '#business',    'icon' => 'brief'],
+        ['label' => 'Verify ID',        'href' => '/kyc.php',     'icon' => 'id'],
+    ])
+), 'Client') ?>
 <main class="wrap" id="main" tabindex="-1">
   <?= ui_alerts($notice, $errors) ?>
   <?= kyc_approved($profile) ? '' : kyc_gate_notice($profile, 'packages') ?>

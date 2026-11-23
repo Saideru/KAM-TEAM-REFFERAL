@@ -618,6 +618,7 @@
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
       backdrop.hidden = !open;
+      if (!open) document.dispatchEvent(new CustomEvent('side:close'));
       if (mq.matches) sb.setAttribute('aria-hidden', open ? 'false' : 'true');
       if (open) {
         var first = $('.side-link.active', sb) || $('.side-link', sb);
@@ -635,12 +636,76 @@
     on(backdrop, 'click', function () { set(false, true); });
     on(sb, 'click', function (ev) {
       if (ev.target.closest('.side-close')) { set(false, true); return; }
-      if (mq.matches && ev.target.closest('.side-link')) set(false, false);
+      if (mq.matches && ev.target.closest('.side-link') && !ev.target.closest('.side-drawer-btn')) set(false, false);
     });
     on(document, 'keydown', function (ev) {
       if (ev.key === 'Escape' && isOpen()) set(false, true);
     });
     if (mq.addEventListener) mq.addEventListener('change', sync); else if (mq.addListener) mq.addListener(sync);
+    sync();
+  }
+
+  /* ------------------------------------------------------------------
+   * Child sidebar drawers — slide over the sidebar when triggered.
+   * ---------------------------------------------------------------- */
+  function sideDrawers() {
+    var sb = document.getElementById('app-sidebar');
+    if (!sb) return;
+    function openDrawer(id) {
+      $$('.side-child', sb).forEach(function (el) {
+        var isTarget = el.id === 'side-child-' + id;
+        el.classList.toggle('is-open', isTarget);
+        el.setAttribute('aria-hidden', isTarget ? 'false' : 'true');
+      });
+      $$('.side-drawer-btn', sb).forEach(function (btn) {
+        var on = btn.getAttribute('data-drawer') === id;
+        btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+      });
+    }
+    function closeAll() {
+      $$('.side-child', sb).forEach(function (el) {
+        el.classList.remove('is-open');
+        el.setAttribute('aria-hidden', 'true');
+      });
+      $$('.side-drawer-btn', sb).forEach(function (btn) {
+        btn.setAttribute('aria-expanded', 'false');
+      });
+    }
+    // A group button lights up when one of its entries is the current page
+    // or panel, and carries the sum of its entries' counters.
+    function sync() {
+      $$('.side-drawer-btn', sb).forEach(function (btn) {
+        var drawer = document.getElementById('side-child-' + btn.getAttribute('data-drawer'));
+        if (!drawer) return;
+        var active = !!$('.side-link.active', drawer);
+        if (btn.classList.contains('active') !== active) btn.classList.toggle('active', active);
+        var sum = 0;
+        $$('.tab-count', drawer).forEach(function (c) { if (!c.hidden) sum += parseInt(c.textContent, 10) || 0; });
+        var badge = $('.side-group-count', btn);
+        if (badge) {
+          if (badge.hidden !== !sum) badge.hidden = !sum;
+          if (sum && badge.textContent !== String(sum)) badge.textContent = String(sum);
+        }
+      });
+    }
+    on(sb, 'click', function (ev) {
+      var btn = ev.target.closest('.side-drawer-btn');
+      if (btn) {
+        var id = btn.getAttribute('data-drawer');
+        btn.getAttribute('aria-expanded') === 'true' ? closeAll() : openDrawer(id);
+        return;
+      }
+      if (ev.target.closest('.side-child-back')) { closeAll(); return; }
+      // Picking an entry inside a group returns to the main list.
+      if (ev.target.closest('.side-child .side-link')) closeAll();
+    });
+    on(document, 'keydown', function (ev) {
+      if (ev.key === 'Escape') closeAll();
+    });
+    on(document, 'side:close', closeAll);
+    if ('MutationObserver' in window) {
+      new MutationObserver(sync).observe(sb, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'hidden'] });
+    }
     sync();
   }
 
@@ -675,7 +740,7 @@
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
      countdowns, tableHints, copyButtons, adminPanels, tableFilters, netFilters,
-     statusFields, idleWatch, mobileNav, tableLabels, liveRefresh].forEach(function (mod) {
+     statusFields, idleWatch, mobileNav, sideDrawers, tableLabels, liveRefresh].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });
   }

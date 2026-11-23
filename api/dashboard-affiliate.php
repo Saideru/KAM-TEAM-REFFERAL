@@ -225,10 +225,16 @@ if ($view === 'earnings') $view = 'payout';   // old links
 if ($gated || !isset($pages[$view])) $view = $gated ? 'plan' : 'overview';
 $canRefer = !in_array($state, ['grace', 'terminated'], true);
 
-$navItems = [];
-foreach ($pages as $key => $pg) {
-    $navItems[] = ['label' => $pg['label'], 'href' => $base . '?view=' . $key, 'icon' => $pg['icon']];
-}
+$navOf = fn(string ...$keys): array => array_map(
+    fn($k) => isset($pages[$k]) ? ['label' => $pages[$k]['label'], 'href' => $base . '?view=' . $k, 'icon' => $pages[$k]['icon']] : null,
+    $keys
+);
+$navItems = array_merge(
+    $navOf('overview'),
+    side_group('Referrals', 'users', 'referrals', $navOf('share', 'clients', 'network')),
+    $navOf('payout'),
+    side_group('Account', 'user', 'account', $navOf('plan', 'verify', 'business', 'activate'))
+);
 ?>
 <?= app_sidebar($gated ? [
     ['label' => 'Choose your plan', 'href' => $base . '?view=plan', 'icon' => 'box'],

@@ -657,32 +657,45 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 ]) ?>
 
 <div class="shell">
-<?= app_sidebar([
-    ['label' => 'Users',        'panel' => 'users',        'icon' => 'users'],
-    ['label' => 'Approvals',    'panel' => 'approvals',    'icon' => 'check', 'count' => $approvalCount],
-    ['label' => 'Roulette',     'panel' => 'roulette',     'icon' => 'wheel'],
-    ['label' => 'KYC',          'panel' => 'kyc',          'icon' => 'id',    'count' => count($kycPending)],
-    ['label' => 'Payment',      'panel' => 'payment',      'icon' => 'qr'],
-    ['label' => 'Referral pipeline', 'panel' => 'pipeline', 'icon' => 'check'],
-    ['label' => 'Client payments',  'panel' => 'clientpay', 'icon' => 'cash'],
-    ['label' => 'Referral network', 'panel' => 'referrals', 'icon' => 'tree'],
-    ['label' => 'Packages',     'panel' => 'packages',     'icon' => 'box'],
-    ['label' => 'Payouts',      'panel' => 'payouts',      'icon' => 'cash', 'count' => $payoutPending],
-    ['label' => 'Transactions', 'panel' => 'transactions', 'icon' => 'cash'],
-    ['label' => 'Services',     'panel' => 'services',     'icon' => 'tool'],
-    ['label' => 'Notify',       'panel' => 'notify',       'icon' => 'bell'],
-    ['label' => 'Audit logs',   'panel' => 'logs',         'icon' => 'log'],
-    ['label' => 'Recycle bin',  'panel' => 'trash',        'icon' => 'trash', 'count' => $trashCount],
-    ['label' => 'Client work →', 'href' => '/work.php',     'icon' => 'check'],
-    // POSTs to the session switcher — the admin's referral slot now
-    // lives on a dedicated linked Growth Partner row (see migration
-    // 20261128). Switching flips the session to that row so the GP
-    // dashboard renders its own data; "Back to admin" returns here.
-    ['label' => 'My referral account →', 'href' => '/notifications.php', 'icon' => 'link',
-     'post' => true, 'csrf' => $csrf,
-     'params' => ['action' => 'switch', 'to' => $profile['linked_profile_id'] ?? '']],
-    ['label' => 'Program docs →', 'href' => '/report.php?doc=components', 'icon' => 'log'],
-], 'Admin', 'users') ?>
+<?= app_sidebar(array_merge(
+    side_group('People', 'users', 'people', [
+        ['label' => 'Users',     'panel' => 'users',     'icon' => 'users'],
+        ['label' => 'Approvals', 'panel' => 'approvals', 'icon' => 'check', 'count' => $approvalCount],
+        ['label' => 'KYC',       'panel' => 'kyc',       'icon' => 'id',    'count' => count($kycPending)],
+    ]),
+    side_group('Referrals', 'tree', 'referrals', [
+        ['label' => 'Referral pipeline', 'panel' => 'pipeline',  'icon' => 'check'],
+        ['label' => 'Referral network',  'panel' => 'referrals', 'icon' => 'tree'],
+        ['label' => 'Roulette',          'panel' => 'roulette',  'icon' => 'wheel'],
+    ]),
+    side_group('Money', 'cash', 'money', [
+        ['label' => 'Client payments', 'panel' => 'clientpay',    'icon' => 'cash'],
+        ['label' => 'Payouts',         'panel' => 'payouts',      'icon' => 'cash', 'count' => $payoutPending],
+        ['label' => 'Transactions',    'panel' => 'transactions', 'icon' => 'log'],
+        ['label' => 'Payment QR',      'panel' => 'payment',      'icon' => 'qr'],
+    ]),
+    side_group('Catalog', 'box', 'catalog', [
+        ['label' => 'Packages', 'panel' => 'packages', 'icon' => 'box'],
+        ['label' => 'Services', 'panel' => 'services', 'icon' => 'tool'],
+    ]),
+    side_group('System', 'tool', 'system', [
+        ['label' => 'Notify',      'panel' => 'notify', 'icon' => 'bell'],
+        ['label' => 'Audit logs',  'panel' => 'logs',   'icon' => 'log'],
+        ['label' => 'Recycle bin', 'panel' => 'trash',  'icon' => 'trash', 'count' => $trashCount],
+    ]),
+    side_group('Client work', 'brief', 'client-work', [
+        ['label' => 'Task tracker',   'href' => '/work.php',                  'icon' => 'check'],
+        ['label' => 'Client reports', 'href' => '/work.php?view=reports',     'icon' => 'log'],
+        ['label' => 'Staff payouts',  'href' => '/work.php?view=payouts',     'icon' => 'cash'],
+        ['label' => 'Program docs',   'href' => '/report.php?doc=components', 'icon' => 'brief'],
+    ]),
+    // POSTs to the session switcher: the admin's referral slot lives on a
+    // linked Growth Partner row (migration 20261128); switching flips the
+    // session to it, and "Back to admin" returns here.
+    [['label' => 'My referral account', 'href' => '/notifications.php', 'icon' => 'link',
+      'post' => true, 'csrf' => $csrf,
+      'params' => ['action' => 'switch', 'to' => $profile['linked_profile_id'] ?? '']]]
+), 'Admin', 'users') ?>
 <main class="wrap" id="main" tabindex="-1">
   <?= ui_page_title('Mission control // ' . e($profile['full_name'] ?? ''), 'Admin dashboard.', 'Manage the program.') ?>
 

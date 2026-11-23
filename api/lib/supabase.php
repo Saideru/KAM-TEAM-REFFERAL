@@ -1662,9 +1662,11 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
         'trash' => '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/>',
         'brief' => '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
     ];
-    $out = '';
-    foreach ($items as $it) {
-        $svg   = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ($icons[$it['icon'] ?? 'home'] ?? '') . '</svg>';
+    $svgOf = fn(?string $k): string => '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ($icons[$k ?? 'home'] ?? '') . '</svg>';
+    $isOn = fn(array $it): bool => isset($it['panel']) ? $active === $it['panel'] : (isset($it['href']) && empty($it['post']) && $active === $it['href']);
+
+    // One sidebar entry: panel button, POST-form button or plain link.
+    $render = function (array $it) use ($svgOf, $isOn): string {
         // Panel counters are always rendered (hidden at 0) and marked live, so
         // a background refresh can bring a badge in or out without a reload.
         if (isset($it['panel']) && array_key_exists('count', $it)) {
@@ -1672,31 +1674,63 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
         } else {
             $count = !empty($it['count']) ? '<span class="tab-count">' . (int) $it['count'] . '</span>' : '';
         }
-        $inner = $svg . '<span class="side-label">' . e($it['label']) . '</span>' . $count;
+        $inner = $svgOf($it['icon'] ?? 'home') . '<span class="side-label">' . e($it['label']) . '</span>' . $count;
         if (isset($it['panel'])) {
-            $on = $active === $it['panel'];
-            $out .= '<button type="button" class="side-link admin-tab' . ($on ? ' active' : '') . '"'
+            $on = $isOn($it);
+            return '<button type="button" class="side-link admin-tab' . ($on ? ' active' : '') . '"'
                 . ($on ? ' aria-current="true"' : '') . ' data-panel="' . e($it['panel']) . '">' . $inner . '</button>';
-        } elseif (!empty($it['post'])) {
-            // POST form styled as a link — for actions that change server
-            // state from the sidebar (e.g. switching to a linked account).
+        }
+        if (!empty($it['post'])) {
+            // POST form styled as a link: actions that change server state
+            // from the sidebar (e.g. switching to a linked account).
             $params = '';
             foreach ($it['params'] ?? [] as $k => $v) {
                 $params .= '<input type="hidden" name="' . e($k) . '" value="' . e((string) $v) . '">';
             }
-            $out .= '<form class="side-form" method="post" action="' . e($it['href']) . '">'
+            return '<form class="side-form" method="post" action="' . e($it['href']) . '">'
                 . '<input type="hidden" name="csrf" value="' . e($it['csrf'] ?? '') . '">'
                 . $params
-                . '<button type="submit" class="side-link">' . $inner . '</button>'
-                . '</form>';
-        } else {
-            $on = $active === $it['href'];
-            $out .= '<a class="side-link' . ($on ? ' active' : '') . '"' . ($on ? ' aria-current="page"' : '')
-                . ' href="' . e($it['href']) . '">' . $inner . '</a>';
+                . '<button type="submit" class="side-link">' . $inner . '</button></form>';
         }
+        $on = $isOn($it);
+        return '<a class="side-link' . ($on ? ' active' : '') . '"' . ($on ? ' aria-current="page"' : '')
+            . ' href="' . e($it['href']) . '">' . $inner . '</a>';
+    };
+
+    $chevron = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>';
+    $back    = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>';
+    $out = '';
+    $drawers = '';
+    foreach ($items as $it) {
+        if (!isset($it['drawer'])) { $out .= $render($it); continue; }
+        // Group: a button in the main list that slides a child list over it.
+        $did = 'side-child-' . e($it['drawer']);
+        $kids = ''; $sum = 0; $hasActive = false;
+        foreach ($it['children'] ?? [] as $ch) {
+            $kids .= $render($ch);
+            $sum  += (int) ($ch['count'] ?? 0);
+            if ($isOn($ch)) $hasActive = true;
+        }
+        $out .= '<button type="button" class="side-link side-drawer-btn' . ($hasActive ? ' active' : '') . '" data-drawer="' . e($it['drawer']) . '" aria-controls="' . $did . '" aria-expanded="false">'
+            . $svgOf($it['icon'] ?? 'home') . '<span class="side-label">' . e($it['label']) . '</span>'
+            . '<span class="tab-count side-group-count"' . ($sum ? '' : ' hidden') . '>' . $sum . '</span>'
+            . '<span class="side-drawer-arrow">' . $chevron . '</span></button>';
+        $drawers .= '<div class="side-child" id="' . $did . '" aria-hidden="true" aria-label="' . e($it['label']) . '">'
+            . '<div class="side-child-head"><button type="button" class="side-child-back" data-drawer-close="' . e($it['drawer']) . '">' . $back . ' Back</button>'
+            . '<span class="side-child-title">' . e($it['label']) . '</span></div>'
+            . '<nav class="side-nav">' . $kids . '</nav></div>';
     }
     return '<aside class="sidebar" id="app-sidebar" aria-label="' . e($title) . '"><div class="side-title"><span>' . e($title) . '</span>'
-        . '<button type="button" class="side-close" aria-label="Close menu">&times;</button></div><nav class="side-nav">' . $out . '</nav></aside>';
+        . '<button type="button" class="side-close" aria-label="Close menu">&times;</button></div><nav class="side-nav">' . $out . '</nav>' . $drawers . '</aside>';
+}
+
+// Group sidebar entries under one drawer. A group with a single entry needs
+// no drawer, so it comes back as that entry; an empty group as nothing.
+function side_group(string $label, string $icon, string $id, array $children): array
+{
+    $children = array_values(array_filter($children));
+    if (count($children) < 2) return $children;
+    return [['label' => $label, 'icon' => $icon, 'drawer' => $id, 'children' => $children]];
 }
 
 // =====================================================================
