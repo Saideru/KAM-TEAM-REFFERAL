@@ -589,16 +589,26 @@ function plan_request_pending(string $token, string $userId): bool
 
 function audit_log(string $token, string $action, ?string $entityType = null, ?string $entityId = null, ?string $summary = null): void
 {
-    $session = &_session();
     $ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    supabase_request('POST', '/rest/v1/system_logs', [
-        'actor_id'    => $session['sb']['user_id'] ?? null,
+    // The real person: an admin switched into their own Growth Partner
+    // account is still logged as the admin. Their full name is saved on the
+    // row too (system_logs.actor_name), so the log stays readable even if
+    // the account is later renamed or deleted.
+    $row = [
+        'actor_id'    => session_base_user_id(),
+        'actor_name'  => actor_full_name($token),
         'action'      => $action,
         'entity_type' => $entityType,
         'entity_id'   => $entityId,
         'summary'     => $summary,
         'ip_address'  => $ip,
-    ], $token, ['Prefer: return=minimal']);
+    ];
+    $res = supabase_request('POST', '/rest/v1/system_logs', $row, $token, ['Prefer: return=minimal']);
+    if ($res['error'] && str_contains((string) $res['error'], 'actor_name')) {
+        // Before migration 20261205 the column doesn't exist — never lose the log line.
+        unset($row['actor_name']);
+        supabase_request('POST', '/rest/v1/system_logs', $row, $token, ['Prefer: return=minimal']);
+    }
 }
 
 // Audit-log categories for the admin log viewer. An action belongs to the
@@ -609,7 +619,7 @@ const LOG_CATEGORIES = [
     'tasks'    => ['label' => 'Client task log',           'actions' => ['restore_task', 'purge_task'], 'prefixes' => ['task_']],
     'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
     'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'purge_account', 'partner_account_opened', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
-    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'update_transaction', 'restore_transaction', 'purge_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => []],
+    'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'unilevel_commission', 'basket_credit', 'balance_paid', 'update_transaction', 'restore_transaction', 'purge_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => ['payout_', 'referral_']],
     'kyc'      => ['label' => 'KYC',                       'actions' => [], 'prefixes' => ['kyc_']],
     'packages' => ['label' => 'Packages',                  'actions' => ['create_package', 'restore_package', 'purge_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
     'roulette' => ['label' => 'Roulette',                  'actions' => ['reassign'], 'prefixes' => ['roulette_']],
@@ -922,7 +932,7 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
     $owner = roulette_assign($token, $txnId, $txn['user_id']);
 
     audit_log($token, $isDeposit ? 'approve_deposit' : 'approve_activation', 'transaction', $txnId,
-        'Approved ' . $pkgName . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—')
+        'Approved ' . $pkgName . ' ($' . number_format((float) $txn['amount'], 2) . ') ref ' . ($txn['payment_ref'] ?? '—') . (($by = actor_full_name($token)) ? ' by ' . $by : '')
         . ($owner ? ' → roulette: ' . $owner['full_name'] : ''));
 
     if ($isDeposit) {
@@ -1204,11 +1214,17 @@ function approve_application(string $token, string $userId): ?string
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
 
+    // Who approved it (migration 20261205; ignored if not run yet).
+    $by = actor_full_name($token);
+    supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($userId), [
+        'approved_by' => session_base_user_id(), 'approved_at' => date('c'),
+    ], $token, ['Prefer: return=minimal']);
+
     // Roulette: every new account takes one turn and keeps that admin for good.
     $owner = roulette_claim_account($token, $userId);
 
     audit_log($token, 'approve_application', 'profile', $userId,
-        'Approved ' . role_name($p['role']) . ' application' . ($owner ? ' → roulette: ' . $owner['full_name'] : ''));
+        'Approved ' . role_name($p['role']) . ' application' . ($by ? ' by ' . $by : '') . ($owner ? ' → roulette: ' . $owner['full_name'] : ''));
     notify($token, 'Application approved',
         'Welcome aboard — your ' . role_name($p['role']) . ' account is active.'
         . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $userId);
@@ -1961,7 +1977,8 @@ function review_kyc(string $token, string $userId, string $adminId, bool $approv
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
 
-    audit_log($token, 'kyc_' . $status, 'kyc', $userId, 'KYC ' . $status . ($note !== '' ? ' — ' . $note : ''));
+    $by = actor_full_name($token);
+    audit_log($token, 'kyc_' . $status, 'kyc', $userId, 'KYC ' . $status . ($by ? ' by ' . $by : '') . ($note !== '' ? ' — ' . $note : ''));
     notify($token,
         $approve ? 'Identity verified' : 'Identity check not approved',
         $approve
@@ -2160,3 +2177,4 @@ function networth_html(string $token, array $profile, string $period = 'month', 
 }
 
 require_once __DIR__ . '/pipeline.php';
+require_once __DIR__ . '/clientpay.php';

@@ -215,7 +215,7 @@ function pipeline_admin_html(string $token, string $csrf): string
     $refs = supabase_request('GET', '/rest/v1/referrals?select=id,stage,stage_reason,stage_at,stage_package_id,created_at,'
         . 'client:profiles!referrals_referred_id_fkey(id,full_name,username,role,status,deleted_at),'
         . 'referrer:profiles!referrals_referrer_id_fkey(id,full_name,username,referral_code,affiliate_tier),'
-        . 'package:packages!referrals_stage_package_id_fkey(name,price)&level=eq.1&order=created_at.desc', null, $token)['body'] ?? [];
+        . 'package:packages!referrals_stage_package_id_fkey(name,price),by:profiles!referrals_stage_by_fkey(full_name)&level=eq.1&order=created_at.desc', null, $token)['body'] ?? [];
     $refs = array_values(array_filter(is_array($refs) ? $refs : [], fn($r) => ($r['client']['role'] ?? '') === 'client' && empty($r['client']['deleted_at'])));
     $pkgs = supabase_request('GET', '/rest/v1/packages?select=id,name,price&kind=eq.service&active=eq.true&order=price.asc', null, $token)['body'] ?? [];
     $pkgs = is_array($pkgs) ? $pkgs : [];
@@ -267,7 +267,7 @@ function pipeline_admin_html(string $token, string $csrf): string
         $h .= '<tr><td><strong>' . e($c['full_name']) . '</strong><span class="ut-sub">@' . e($c['username']) . '</span></td>'
             . '<td><strong>' . e($g['full_name'] ?? '—') . '</strong><span class="ut-sub">' . e($g['referral_code'] ?? '') . (is_house_partner($g) ? ' · admin account' : '') . '</span></td>'
             . '<td>' . referral_stage_html($r, $r['package']['name'] ?? null) . '</td>'
-            . '<td style="font-size:12px">' . date('M j, Y', strtotime($r['stage_at'] ?? $r['created_at'])) . '</td>'
+            . '<td style="font-size:12px">' . date('M j, Y', strtotime($r['stage_at'] ?? $r['created_at'])) . (!empty($r['by']['full_name']) ? '<span class="ut-sub">by <strong>' . e($r['by']['full_name']) . '</strong></span>' : '') . '</td>'
             . '<td class="ut-actions">' . $act . '</td></tr>';
     }
     return $h . '</tbody></table></div></div>' . basket_html($token);

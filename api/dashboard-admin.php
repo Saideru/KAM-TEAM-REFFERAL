@@ -30,6 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($pipeRes = pipelin
     $errors[] = $pipeRes[0];
 }
 
+// Client payments: mark a client's remaining 50% as paid.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($cpRes = client_payment_action($token, $profile))) {
+    if ($cpRes[0] === null) { flash('success', $cpRes[1]); $back('clientpay'); exit; }
+    $errors[] = $cpRes[0];
+}
+
 // Payouts: mark paid / reject, and the password-confirmed killswitch.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_team_action($token, $profile))) {
     if ($poRes[0] === null) { flash('success', $poRes[1]); $back('payouts'); exit; }
@@ -550,6 +556,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 // Fetch data
 $profilesRes = supabase_request('GET', '/rest/v1/profiles?select=*&order=created_at.desc', null, $token);
 $allProfiles = is_array($profilesRes['body']) && !$profilesRes['error'] ? $profilesRes['body'] : [];
+// id → full name, for "approved by" labels.
+$nameById = array_column($allProfiles, 'full_name', 'id');
 
 $refRes  = supabase_request('GET', '/rest/v1/referrals?select=*,referrer:profiles!referrals_referrer_id_fkey(full_name,username),referred:profiles!referrals_referred_id_fkey(full_name,username)&order=created_at.desc', null, $token);
 $allRefs = is_array($refRes['body']) && !$refRes['error'] ? $refRes['body'] : [];
@@ -599,7 +607,7 @@ $comPct  = commission_pct($token);
 $kycRes     = supabase_request('GET', '/rest/v1/kyc_submissions?select=*,profiles!kyc_submissions_user_id_fkey(full_name,username,role)&status=eq.pending&order=created_at.asc', null, $token);
 $kycPending = is_array($kycRes['body']) && !$kycRes['error'] ? $kycRes['body'] : [];
 
-$kycDoneRes = supabase_request('GET', '/rest/v1/kyc_submissions?select=user_id,legal_name,id_type,status,note,reviewed_at,profiles!kyc_submissions_user_id_fkey(full_name,username)&status=in.(approved,rejected)&order=reviewed_at.desc&limit=50', null, $token);
+$kycDoneRes = supabase_request('GET', '/rest/v1/kyc_submissions?select=user_id,legal_name,id_type,status,note,reviewed_at,reviewed_by,profiles!kyc_submissions_user_id_fkey(full_name,username)&status=in.(approved,rejected)&order=reviewed_at.desc&limit=50', null, $token);
 $kycDone    = is_array($kycDoneRes['body']) && !$kycDoneRes['error'] ? $kycDoneRes['body'] : [];
 
 $logCat  = isset(LOG_CATEGORIES[$_GET['log'] ?? '']) || ($_GET['log'] ?? '') === 'other' ? $_GET['log'] : '';
@@ -652,6 +660,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     ['label' => 'KYC',          'panel' => 'kyc',          'icon' => 'id',    'count' => count($kycPending)],
     ['label' => 'Payment',      'panel' => 'payment',      'icon' => 'qr'],
     ['label' => 'Referral pipeline', 'panel' => 'pipeline', 'icon' => 'check'],
+    ['label' => 'Client payments',  'panel' => 'clientpay', 'icon' => 'cash'],
     ['label' => 'Referral network', 'panel' => 'referrals', 'icon' => 'tree'],
     ['label' => 'Packages',     'panel' => 'packages',     'icon' => 'box'],
     ['label' => 'Payouts',      'panel' => 'payouts',      'icon' => 'cash', 'count' => $payoutPending],
@@ -681,7 +690,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
        'note'  => $adminCount . ' admin &middot; ' . $staffCount . ' staff &middot; ' . $gpCount . ' growth partner' . ($gpCount === 1 ? '' : 's') . ' &middot; ' . $clientCount . ' client' . ($clientCount === 1 ? '' : 's')],
       ['label' => 'Referrals', 'value' => count($allRefs)],
       ['label' => 'Packages',  'value' => count($allPkgs)],
-      ['label' => 'Revenue',   'value' => '$' . number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] : 0, $allTxns)), 2), 'tone' => 'green'],
+      ['label' => 'Revenue',   'value' => '$' . number_format(array_sum(array_map(fn($t) => in_array($t['type'], ['activation', 'deposit'], true) && $t['status'] === 'completed' ? (float) $t['amount'] + (float) ($t['balance_amount'] ?? 0) : 0, $allTxns)), 2), 'tone' => 'green'],
   ]) ?>
   </div>
 
@@ -798,7 +807,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
                 <span class="ut-sub">Partner account: @<?= e($linkedTo) ?></span>
               <?php endif; ?>
             </td>
-            <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= terms_outdated($p, $teamGp) ? '<span class="ut-sub" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
+            <td><span class="pill <?= e($p['status']) ?>"><?= e($p['status']) ?></span><?= $p['status'] === 'accepted' && !empty($p['approved_by']) ? '<span class="ut-sub">by ' . e($nameById[$p['approved_by']] ?? 'former team member') . (!empty($p['approved_at']) ? ' · ' . e(date('M j', strtotime($p['approved_at']))) : '') . '</span>' : '' ?><?= terms_outdated($p, $teamGp) ? '<span class="ut-sub" title="Has not accepted Manual v' . e(TERMS_VERSION) . '">terms pending</span>' : '' ?></td>
             <td class="ut-life">
               <?php if (in_array($p['role'], ['admin', 'staff'], true)): ?>Permanent
               <?php elseif ($p['role'] === 'growth_partner' && tier_unlimited($p)): ?>Lifetime<span class="ut-sub">Unlimited · never expires</span>
@@ -954,7 +963,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     <?php if ($kycDone): ?>
     <div class="card"><h2>Reviewed</h2>
       <div class="table-scroll"><table>
-        <thead><tr><th>User</th><th>Legal name</th><th>ID</th><th>Result</th><th>Reviewed</th></tr></thead>
+        <thead><tr><th>User</th><th>Legal name</th><th>ID</th><th>Result</th><th>Reviewed</th><th>Reviewed by</th></tr></thead>
         <tbody><?php foreach ($kycDone as $k): ?>
           <tr>
             <td><strong><?= e($k['profiles']['full_name'] ?? '—') ?></strong><br><span style="font-size:11px;color:var(--text-dim)"><?= e($k['profiles']['username'] ?? '') ?></span></td>
@@ -962,6 +971,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td style="font-size:12px"><?= e(KYC_ID_TYPES[$k['id_type']] ?? $k['id_type']) ?></td>
             <td><span class="pill <?= $k['status'] === 'approved' ? 'active' : 'failed' ?>"><?= e($k['status']) ?></span><?= $k['note'] ? '<br><span style="font-size:11px;color:var(--text-dim)">' . e($k['note']) . '</span>' : '' ?></td>
             <td style="font-size:12px"><?= $k['reviewed_at'] ? date('M j, Y', strtotime($k['reviewed_at'])) : '—' ?></td>
+            <td><strong><?= e(!empty($k['reviewed_by']) ? ($nameById[$k['reviewed_by']] ?? 'former team member') : '—') ?></strong></td>
           </tr>
         <?php endforeach; ?></tbody>
       </table></div>
@@ -1281,6 +1291,10 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- TRANSACTIONS -->
+  <div id="panel-clientpay" class="admin-panel" data-live="panel-clientpay">
+    <?= client_payments_html($token, $csrf, $nameById) ?>
+  </div>
+
   <div id="panel-pipeline" class="admin-panel" data-live="panel-pipeline">
     <?= pipeline_admin_html($token, $csrf) ?>
   </div>
@@ -1516,7 +1530,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
               <td class="log-what"><?= e($log['summary'] ?? '—') ?>
                 <?php if (($log['entity_type'] ?? '') === 'client_task' && $log['entity_id']): ?><a href="/work.php?task=<?= e($log['entity_id']) ?>">open task →</a>
                 <?php elseif (($log['entity_type'] ?? '') === 'client_report' && $log['entity_id']): ?><a href="/work.php?report=<?= e($log['entity_id']) ?>">open report →</a><?php endif; ?></td>
-              <td class="log-by"><?= e($log['profiles']['full_name'] ?? 'system') ?></td>
+              <td class="log-by"><?= e($log['actor_name'] ?? $log['profiles']['full_name'] ?? 'system') ?></td>
               <td class="log-ip"><?= e($log['ip_address'] ?: '—') ?></td>
             </tr>
           <?php endforeach; ?>
