@@ -1164,3 +1164,36 @@ body.idle-warning { overflow: hidden; }
 .acct-toggle-form.is-going .acct-toggle.is-on .acct-toggle-knob { transform: translateX(0); }
 @media (prefers-reduced-motion: reduce) { .acct-toggle-knob, .acct-toggle-track { transition: none; } }
 @media (max-width: 720px) { .acct-toggle-side:not(.is-cur) { display: none; } }
+
+/* ── Referral pipeline stages + Main Basket ───────────────────────────── */
+.stage-flow { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.stage-sep { color: var(--text-dim); font-size: var(--text-sm); }
+.pill.stage-done { background: transparent; border: 1px dashed var(--border-light); color: var(--text-dim); }
+.stage-reason { display: block; margin-top: 4px; color: var(--rust); max-width: 320px; }
+.pipe-act { margin: 0 0 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.pipe-act select, .pipe-act input { font: inherit; font-size: var(--text-sm); padding: 6px 8px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--surface-2); color: var(--text); max-width: 220px; }
+.pipe-reject input { max-width: 150px; }
+.basket-total { font-family: var(--font-head); font-size: 26px; font-weight: 700; color: var(--rust); font-variant-numeric: tabular-nums; }
+.stage-flow .pill.stage-approved:not(.stage-done) { background: var(--orange); border-color: var(--orange); color: #1A1917; font-weight: 600; }
+.stage-flow .pill.stage-converted:not(.stage-done) { background: var(--text); border-color: var(--text); color: var(--bg); }
+.stage-flow .pill.stage-rejected:not(.stage-done) { background: transparent; border-color: var(--rust); color: var(--rust); }
+
+/* ── Referral network: Growth Partners / Clients toggle ──────────────── */
+.net-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seg-n { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 999px; background: var(--border); color: var(--text); font-size: var(--text-2xs); text-align: center; }
+.seg-btn.is-on .seg-n { background: var(--orange); color: #1A1917; }
+.stage-counts { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.stage-counts .pill.stage-approved { background: var(--orange); border-color: var(--orange); color: #1A1917; }
+.stage-counts .pill.stage-converted { background: var(--text); border-color: var(--text); color: var(--bg); }
+.stage-counts .pill.stage-rejected { background: transparent; border-color: var(--rust); color: var(--rust); }
+
+/* ── Referral network search + filters ───────────────────────────────── */
+.net-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 12px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.net-q { flex: 1 1 100%; font: inherit; font-size: var(--text-md); padding: 9px 12px 9px 34px; border: 1px solid var(--border-light); border-radius: 6px; color: var(--text);
+  background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23625E57' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='5'/%3E%3Cpath d='m11 11 3.5 3.5'/%3E%3C/svg%3E") no-repeat 11px 50%; }
+.net-q:focus { outline: 2px solid var(--orange); outline-offset: 1px; border-color: var(--orange); }
+.net-chips { margin: 0; align-items: center; gap: 6px; }
+.net-chips-l { font-family: var(--font); font-size: var(--text-2xs); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); margin-right: 2px; }
+.net-chips .filter-chip { padding: 4px 10px; font-size: var(--text-2xs); }
+.net-count { margin-left: auto; font-family: var(--font); font-size: var(--text-xs); color: var(--text-muted); }
+.kyc-need { width: min(460px, calc(100vw - 32px)); }

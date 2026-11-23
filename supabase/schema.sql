@@ -393,22 +393,22 @@ insert into public.packages (name, description, price, commission_outright, comm
 insert into public.packages (name, description, price, monthly_price, commission_outright, commission_unilevel, tier) values
   ('GHL Business Systems Development & Automation',
    'Website, SEO/AEO/GEO, landing page or sales funnel, email & SMS automation, CRM and pipeline setup, lead nurturing. Monthly: CRM maintenance, workflow monitoring, automation management, dedicated GHL system management.',
-   3500.00, 1000.00, 175.00, 5.00, 'standard'),
+   2000.00, 1000.00, 100.00, 5.00, 'standard'),
   ('Complete Google SEO Setup & Optimization',
    'Search Console & GA4, Google Business Profile (where eligible), technical SEO audit and fixes, keyword & competitor research, on-page optimization for up to 10 pages, sitemap/indexing/schema, internal linking, final report. Monthly: monitoring, reporting, content optimization, technical maintenance.',
-   3000.00, 700.00, 150.00, 5.00, 'standard'),
+   1000.00, 600.00, 50.00, 5.00, 'standard'),
   ('Full-Service Digital Marketing Package',
    'Digital marketing strategy, business website, Google SEO & Search Console, Google Business Profile (if eligible), Google & Meta Ads setup, social media branding, GHL CRM and pipelines, email & SMS automation, AI lead qualification. Monthly: SEO, ads management, social content, email marketing, CRM monitoring, reporting, optimization.',
-   7500.00, 2500.00, 375.00, 5.00, 'standard'),
+   3000.00, 1500.00, 150.00, 5.00, 'standard'),
   ('Custom Business Operations Management System',
    'Planning, development, testing and deployment of an operations dashboard with user management, role-based permissions, workflow automation, client management, reporting & analytics, database/API integration, security controls and admin training. Monthly: monitoring, security patches, bug fixes, backup oversight, limited support.',
-   25000.00, 600.00, 1250.00, 5.00, 'standard'),
+   4000.00, 1500.00, 200.00, 5.00, 'standard'),
   ('Customized Integrated Digital & Network Marketing Business System',
    'System planning and architecture, digital marketing, CRM and automation, network marketing and commission system, member and admin dashboards, database and integrations, testing, deployment and training. Monthly: monitoring, backup oversight, security patches, bug fixes, limited support.',
-   45000.00, 2000.00, 2250.00, 5.00, 'standard'),
+   4500.00, 2000.00, 225.00, 5.00, 'standard'),
   ('Complete AI SEO, AEO & GEO Optimization',
    'Technical Google SEO, Search Console/GA4/tracking, keyword & competitor research, on-page optimization for up to 10 pages, schema and structured data, content optimization for AI answers, entity & online presence optimization, AI visibility baseline, audit report and roadmap. Monthly: technical monitoring, content improvement, AI visibility checks, performance analysis, reporting.',
-   5500.00, 1500.00, 275.00, 5.00, 'standard');
+   1500.00, 750.00, 75.00, 5.00, 'standard');
 
 -- ---------------------------------------------------------------------
 -- 10 // ADMIN ACCOUNTS

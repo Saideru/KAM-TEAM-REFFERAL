@@ -24,6 +24,12 @@ $txnStatusOptions = ['pending', 'completed', 'failed', 'reversed'];
 // PDF receipt for any commission or payout.
 if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], null);
 
+// Referral pipeline: Converted / Approve / Reject / Reopen.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($pipeRes = pipeline_admin_action($token, $profile))) {
+    if ($pipeRes[0] === null) { flash('success', $pipeRes[1]); $back('pipeline'); exit; }
+    $errors[] = $pipeRes[0];
+}
+
 // Payouts: mark paid / reject, and the password-confirmed killswitch.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_team_action($token, $profile))) {
     if ($poRes[0] === null) { flash('success', $poRes[1]); $back('payouts'); exit; }
@@ -551,7 +557,7 @@ $allRefs = is_array($refRes['body']) && !$refRes['error'] ? $refRes['body'] : []
 $pkgRes  = supabase_request('GET', '/rest/v1/packages?select=*&order=created_at.desc', null, $token);
 $allPkgs = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : [];
 
-$txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,username,email,phone,role,business_nature,business_struggles),packages!transactions_package_id_fkey(name,tier,kind)&order=created_at.desc', null, $token);
+$txnRes  = supabase_request('GET', '/rest/v1/transactions?select=*,profiles!transactions_user_id_fkey(full_name,username,email,phone,role,business_nature,business_struggles,kyc_status,affiliate_tier),packages!transactions_package_id_fkey(name,tier,kind)&order=created_at.desc', null, $token);
 $allTxns = is_array($txnRes['body']) && !$txnRes['error'] ? $txnRes['body'] : [];
 $payoutPending = count(array_filter($allTxns, fn($t) => $t['type'] === 'payout' && $t['status'] === 'pending'));
 
@@ -645,6 +651,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     ['label' => 'Roulette',     'panel' => 'roulette',     'icon' => 'wheel'],
     ['label' => 'KYC',          'panel' => 'kyc',          'icon' => 'id',    'count' => count($kycPending)],
     ['label' => 'Payment',      'panel' => 'payment',      'icon' => 'qr'],
+    ['label' => 'Referral pipeline', 'panel' => 'pipeline', 'icon' => 'check'],
     ['label' => 'Referral network', 'panel' => 'referrals', 'icon' => 'tree'],
     ['label' => 'Packages',     'panel' => 'packages',     'icon' => 'box'],
     ['label' => 'Payouts',      'panel' => 'payouts',      'icon' => 'cash', 'count' => $payoutPending],
@@ -875,7 +882,21 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($t['created_at'])) ?></td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                <?php if ($t['type'] === 'deposit' && !kyc_approved($t['profiles'] ?? null)): $kdlg = 'kyc-need-' . $t['id']; $kst = $t['profiles']['kyc_status'] ?? 'not_submitted'; ?>
+                  <button class="btn btn-sm btn-solid" type="button" onclick="document.getElementById('<?= e($kdlg) ?>').showModal()">Approve</button>
+                  <dialog class="tree-dialog kyc-need" id="<?= e($kdlg) ?>" aria-labelledby="<?= e($kdlg) ?>-t">
+                    <div class="tree-dlg-head"><div><span class="label">Can't approve yet</span><h3 id="<?= e($kdlg) ?>-t">KYC approval needed</h3></div></div>
+                    <div class="tree-dlg-body">
+                      <p style="margin:0 0 14px">If <strong><?= e($t['profiles']['full_name'] ?? 'this client') ?></strong>'s KYC isn't approved, their deposit can't be approved. Approve their KYC first<?= $kst === 'pending' ? ' — their ID is waiting in the KYC tab' : ($kst === 'rejected' ? ' — their last ID was rejected, so they need to submit again' : ' — they haven\'t submitted an ID yet') ?>.</p>
+                      <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <?php if ($kst === 'pending'): ?><button class="btn btn-sm btn-solid" type="button" onclick="this.closest('dialog').close();document.querySelector('.admin-tab[data-panel=kyc]').click()">Go to KYC →</button><?php endif; ?>
+                        <form method="dialog" style="margin:0"><button class="btn btn-sm btn-ghost" type="submit">Close</button></form>
+                      </div>
+                    </div>
+                  </dialog>
+                <?php else: ?>
                 <form method="post" class="inline-form" onsubmit="return confirm('Confirm this payment was received?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="approve_payment"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-sm btn-solid" type="submit">Approve</button></form>
+                <?php endif; ?>
                 <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="reject_payment"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><input name="reason" type="text" maxlength="200" placeholder="Reason (optional)" style="width:140px"><button class="btn btn-sm btn-danger" type="submit">Reject</button></form>
               </div>
             </td>
@@ -992,37 +1013,40 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- REFERRALS -->
   <div id="panel-referrals" class="admin-panel" data-live="panel-referrals">
     <?php
-      // Referral network: one row per account in the network, built from
-      // profiles.referred_by (the same link the partner's own downline uses).
-      // Status follows the account itself — once an admin accepts the
-      // account it reads Active; nothing to set by hand here.
+      // Referral network, two views (toggle → ?net=partners | ?net=clients):
+      //   Growth Partners — partner-to-partner downlines (who sponsored whom)
+      //   Clients         — which account each referred client is connected to
+      // Built from profiles.referred_by. Status follows the account itself.
+      $netMode = ($_GET['net'] ?? '') === 'clients' ? 'clients' : 'partners';
+      $isGpRow = fn(array $p) => ($p['role'] ?? '') === 'growth_partner' || !empty($p['affiliate_tier']);
       $netById = [];
       foreach ($liveProfiles as $np) $netById[$np['id']] = $np;
-      $netKids = [];
+      $gpKids = []; $clientKids = [];
       foreach ($liveProfiles as $np) {
-          if (!empty($np['referred_by']) && isset($netById[$np['referred_by']])) $netKids[$np['referred_by']][] = $np;
+          if (empty($np['referred_by']) || !isset($netById[$np['referred_by']])) continue;
+          if ($isGpRow($np))                 $gpKids[$np['referred_by']][]     = $np;
+          elseif ($np['role'] === 'client')  $clientKids[$np['referred_by']][] = $np;
       }
-      // People below an account, every level, guarded against loops.
-      $netBelow = function (string $id) use ($netKids): int {
+      // Partners below an account, every level, guarded against loops.
+      $netBelow = function (string $id) use ($gpKids): int {
           $n = 0; $seen = [$id => true]; $stack = [$id];
           while ($stack) {
-              foreach ($netKids[array_pop($stack)] ?? [] as $k) {
+              foreach ($gpKids[array_pop($stack)] ?? [] as $k) {
                   if (isset($seen[$k['id']])) continue;
                   $seen[$k['id']] = true; $n++; $stack[] = $k['id'];
               }
           }
           return $n;
       };
-      $netTree = function (string $id, int $lvl, array $seen) use (&$netTree, $netKids, $netBelow): string {
-          if (empty($netKids[$id])) return '';
+      $netTree = function (string $id, int $lvl, array $seen) use (&$netTree, $gpKids, $netBelow): string {
+          if (empty($gpKids[$id])) return '';
           $html = '<ul>';
-          foreach ($netKids[$id] as $k) {
+          foreach ($gpKids[$id] as $k) {
               if (isset($seen[$k['id']])) continue;
               $below = $netBelow($k['id']);
-              $type  = role_name($k['role']) . (!empty($k['affiliate_tier']) && $k['role'] !== 'growth_partner' ? ' · ' . tier_label($k['affiliate_tier']) . ' partner' : (!empty($k['affiliate_tier']) ? ' · ' . tier_label($k['affiliate_tier']) : ''));
-              $html .= '<li><div class="org-node ' . e($k['role']) . ($k['status'] !== 'accepted' ? ' is-pending' : '') . '" title="Joined ' . e(date('M j, Y', strtotime($k['created_at']))) . '">'
+              $html .= '<li><div class="org-node growth_partner' . ($k['status'] !== 'accepted' ? ' is-pending' : '') . '" title="Joined ' . e(date('M j, Y', strtotime($k['created_at']))) . '">'
                      . '<span class="org-lvl">L' . $lvl . '</span><strong>' . e($k['full_name']) . '</strong>'
-                     . '<span class="org-type">' . e($type) . ($k['status'] !== 'accepted' ? ' · ' . e($k['status']) : '') . '</span>'
+                     . '<span class="org-type">' . e(($k['referral_code'] ?? '') . (!empty($k['affiliate_tier']) ? ' · ' . tier_label($k['affiliate_tier']) : '')) . ($k['status'] !== 'accepted' ? ' · ' . e($k['status']) : '') . '</span>'
                      . ($below ? '<span class="org-below">' . $below . ' below</span>' : '')
                      . '</div>' . $netTree($k['id'], $lvl + 1, $seen + [$k['id'] => true]) . '</li>';
           }
@@ -1035,29 +1059,69 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           'suspended' => ['Suspended', 'suspended'],
           default     => [ucfirst((string) $p['status']), 'pending'],
       };
-      $netRows = array_values(array_filter($liveProfiles, fn($np) => !empty($np['referral_code']) || !empty($np['referred_by']) || !empty($netKids[$np['id']])));
+      $avatar = fn(array $p) => '<span class="ut-avatar" aria-hidden="true">' . e(strtoupper(mb_substr((string) $p['full_name'], 0, 1)) ?: '?') . '</span>';
+      // Search + filter chips (behaviour: assets/js/app.js netFilters).
+      $chips = function (string $group, string $label, array $opts): string {
+          $h = '<div class="filter-bar net-chips" role="group" aria-label="' . e($label) . '"><span class="net-chips-l">' . e($label) . '</span>';
+          foreach ($opts as $val => $txt) {
+              $h .= '<button type="button" class="filter-chip' . ($val === 'all' ? ' is-on' : '') . '" data-net-group="' . e($group) . '" data-net-val="' . e($val) . '" aria-pressed="' . ($val === 'all' ? 'true' : 'false') . '">' . e($txt) . '</button>';
+          }
+          return $h . '</div>';
+      };
+      $netState = fn(array $p) => match ($p['status']) { 'accepted' => 'active', 'pending' => 'pending', default => 'inactive' };
+
+      // Pipeline stage of each referred client (referrals.stage, migration 20261203).
+      $stageOf = [];
+      foreach ($allRefs as $r) if ((int) ($r['level'] ?? 1) === 1) $stageOf[$r['referred_id']] = $r;
+      $pkgNameById = array_column($allPkgs, 'name', 'id');
+
+      $gpRows = array_values(array_filter($liveProfiles, $isGpRow));
       $netCount = [];
-      foreach ($netRows as $np) $netCount[$np['id']] = $netBelow($np['id']);
-      // Biggest networks first, then A–Z.
-      usort($netRows, fn($a, $b) => ($netCount[$b['id']] <=> $netCount[$a['id']]) ?: strcasecmp($a['full_name'], $b['full_name']));
+      foreach ($gpRows as $np) $netCount[$np['id']] = $netBelow($np['id']);
+      usort($gpRows, fn($a, $b) => ($netCount[$b['id']] <=> $netCount[$a['id']]) ?: strcasecmp($a['full_name'], $b['full_name']));
+
+      // Client view: one row per account that has clients connected to it.
+      $cliRows = array_values(array_filter($liveProfiles, fn($p) => !empty($clientKids[$p['id']])));
+      usort($cliRows, fn($a, $b) => (count($clientKids[$b['id']]) <=> count($clientKids[$a['id']])) ?: strcasecmp($a['full_name'], $b['full_name']));
+      $unlinkedClients = array_values(array_filter($liveProfiles, fn($p) => $p['role'] === 'client' && (empty($p['referred_by']) || !isset($netById[$p['referred_by']]))));
+      $totalClientsLinked = array_sum(array_map('count', $clientKids));
     ?>
-    <div class="card"><h2>Referral network</h2>
-      <p class="hint" style="margin:0 0 12px">Every account with a referral code, an upline or a downline. Status follows the account: once you accept an account it is Active. Totals count every level below the account.</p>
-      <?php if (!$netRows): ?><p class="empty">No referrals yet.</p>
-      <?php else: ?><div class="table-scroll" tabindex="0" role="region" aria-label="Referral network"><table class="users-table net-table">
-        <thead><tr><th scope="col">Account</th><th scope="col">Upline</th><th scope="col">Status</th><th scope="col" class="num">Direct (L1)</th><th scope="col" class="num">Total downline</th><th scope="col" class="ut-actions-h">Tree</th></tr></thead>
-        <tbody><?php foreach ($netRows as $np):
+    <div class="card">
+      <div class="net-head">
+        <h2 style="margin:0">Referral network</h2>
+        <nav class="seg" aria-label="Network view">
+          <a class="seg-btn<?= $netMode === 'partners' ? ' is-on' : '' ?>" href="?net=partners#referrals"<?= $netMode === 'partners' ? ' aria-current="true"' : '' ?>>Growth Partners <span class="seg-n"><?= count($gpRows) ?></span></a>
+          <a class="seg-btn<?= $netMode === 'clients' ? ' is-on' : '' ?>" href="?net=clients#referrals"<?= $netMode === 'clients' ? ' aria-current="true"' : '' ?>>Clients <span class="seg-n"><?= $totalClientsLinked ?></span></a>
+        </nav>
+      </div>
+
+    <?php if ($netMode === 'partners'): ?>
+      <p class="hint" style="margin:10px 0 12px">Growth Partner connections: who sponsored whom. Direct and Total count partners only (every level below); clients are in the Clients view. Status follows the account.</p>
+      <?php if (!$gpRows): ?><p class="empty">No Growth Partners yet.</p>
+      <?php else: ?>
+      <div class="net-tools" data-net-for="net-gp">
+        <input type="search" class="net-q" placeholder="Search name, @username, KT- code or upline…" aria-label="Search Growth Partners" autocomplete="off">
+        <?= $chips('status', 'Status', ['all' => 'All', 'active' => 'Active', 'pending' => 'Pending', 'inactive' => 'Suspended / rejected']) ?>
+        <?= $chips('plan', 'Plan', ['all' => 'All', 'basic' => 'Basic', 'standard' => 'Standard', 'unlimited' => 'Unlimited', 'none' => 'No plan']) ?>
+        <?= $chips('down', 'Network', ['all' => 'All', 'yes' => 'Has downline', 'clients' => 'Has clients', 'no' => 'No downline']) ?>
+        <span class="net-count" aria-live="polite"></span>
+      </div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Growth Partner network"><table class="users-table net-table" id="net-gp">
+        <thead><tr><th scope="col">Growth Partner</th><th scope="col">Upline</th><th scope="col">Status</th><th scope="col" class="num">Direct (L1)</th><th scope="col" class="num">Total downline</th><th scope="col" class="num">Clients</th><th scope="col" class="ut-actions-h">Tree</th></tr></thead>
+        <tbody><?php foreach ($gpRows as $np):
             $up = $netById[$np['referred_by'] ?? ''] ?? null;
             [$stLabel, $stPill] = $netStatus($np);
-            $direct = count($netKids[$np['id']] ?? []);
+            $direct = count($gpKids[$np['id']] ?? []);
             $total  = $netCount[$np['id']];
             $dlgId  = 'tree-' . $np['id'];
+            $nCli   = count($clientKids[$np['id']] ?? []);
+            $tags   = 'status:' . $netState($np) . ' plan:' . ($np['affiliate_tier'] ?: 'none') . ' down:' . ($total ? 'yes' : 'no') . ($nCli ? ' down:clients' : '');
+            $q      = implode(' ', [$np['full_name'], '@' . $np['username'], $np['referral_code'] ?? '', $up['full_name'] ?? '', $up ? '@' . $up['username'] : '']);
         ?>
-          <tr>
-            <td class="ut-account">
-              <span class="ut-avatar" aria-hidden="true"><?= e(strtoupper(mb_substr((string) $np['full_name'], 0, 1)) ?: '?') ?></span>
+          <tr data-tags="<?= e($tags) ?>" data-q="<?= e($q) ?>">
+            <td class="ut-account"><?= $avatar($np) ?>
               <span class="ut-id"><strong><?= e($np['full_name']) ?></strong>
-                <span class="ut-sub">@<?= e($np['username']) ?> · <?= e(role_name($np['role'])) ?></span>
+                <span class="ut-sub">@<?= e($np['username']) ?> · <?= e(tier_label($np['affiliate_tier'] ?? null) ?: 'No plan yet') ?></span>
                 <?php if (!empty($np['referral_code'])): ?><span class="ut-sub"><span class="ref-code"><?= e($np['referral_code']) ?></span></span><?php endif; ?>
               </span>
             </td>
@@ -1065,12 +1129,13 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td><span class="pill <?= e($stPill) ?>"><?= e($stLabel) ?></span></td>
             <td class="num"><?= $direct ?></td>
             <td class="num"><strong class="net-total"><?= $total ?></strong></td>
+            <td class="num"><?= $nCli ?></td>
             <td class="ut-actions">
               <?php if ($total): ?>
                 <button type="button" class="btn btn-sm" onclick="document.getElementById('<?= e($dlgId) ?>').showModal()">View tree →</button>
                 <dialog class="tree-dialog" id="<?= e($dlgId) ?>" aria-labelledby="<?= e($dlgId) ?>-t">
                   <div class="tree-dlg-head">
-                    <div><span class="label"><?= $total ?> in downline · <?= $direct ?> direct</span><h3 id="<?= e($dlgId) ?>-t"><?= e($np['full_name']) ?>'s tree</h3></div>
+                    <div><span class="label"><?= $total ?> partner<?= $total === 1 ? '' : 's' ?> in downline · <?= $direct ?> direct</span><h3 id="<?= e($dlgId) ?>-t"><?= e($np['full_name']) ?>'s tree</h3></div>
                     <form method="dialog"><button class="btn btn-sm btn-ghost" type="submit">Close</button></form>
                   </div>
                   <div class="tree-dlg-body">
@@ -1083,7 +1148,72 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             </td>
           </tr>
         <?php endforeach; ?></tbody>
-      </table></div><?php endif; ?>
+      </table></div>
+      <p class="empty" id="net-gp-none" hidden>No Growth Partners match your search or filters.</p><?php endif; ?>
+
+    <?php else: ?>
+      <p class="hint" style="margin:10px 0 12px">Client connections: every referred client and the account they are connected to (the code they signed up with). Each row lists that account's clients and where they are in the pipeline.</p>
+      <?php if (!$cliRows): ?><p class="empty">No clients are connected to a referrer yet.</p>
+      <?php else: ?>
+      <div class="net-tools" data-net-for="net-cl">
+        <input type="search" class="net-q" placeholder="Search a client or the account they're connected to…" aria-label="Search client connections" autocomplete="off">
+        <?= $chips('stage', 'Pipeline', ['all' => 'All', 'pending' => 'Pending', 'converted' => 'Converted', 'approved' => 'Approved', 'rejected' => 'Rejected']) ?>
+        <?= $chips('via', 'Connected to', ['all' => 'All', 'gp' => 'Growth Partner', 'client' => 'Client code']) ?>
+        <span class="net-count" aria-live="polite"></span>
+      </div>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Client connections"><table class="users-table net-table" id="net-cl">
+        <thead><tr><th scope="col">Connected to</th><th scope="col">Type</th><th scope="col" class="num">Clients</th><th scope="col">Pipeline</th><th scope="col" class="ut-actions-h">Details</th></tr></thead>
+        <tbody><?php foreach ($cliRows as $np):
+            $kids = $clientKids[$np['id']];
+            $byStage = ['pending' => 0, 'converted' => 0, 'approved' => 0, 'rejected' => 0];
+            foreach ($kids as $k) $byStage[$stageOf[$k['id']]['stage'] ?? 'pending'] = ($byStage[$stageOf[$k['id']]['stage'] ?? 'pending'] ?? 0) + 1;
+            $dlgId = 'cli-' . $np['id'];
+            $tags  = 'via:' . ($isGpRow($np) ? 'gp' : 'client');
+            foreach ($byStage as $st => $cnt) if ($cnt) $tags .= ' stage:' . $st;
+            // Search also matches the clients listed in this row's pop-up.
+            $q = implode(' ', array_merge([$np['full_name'], '@' . $np['username'], $np['referral_code'] ?? ''],
+                 array_map(fn($k) => $k['full_name'] . ' @' . $k['username'] . ' ' . ($k['company'] ?? ''), $kids)));
+        ?>
+          <tr data-tags="<?= e($tags) ?>" data-q="<?= e($q) ?>">
+            <td class="ut-account"><?= $avatar($np) ?>
+              <span class="ut-id"><strong><?= e($np['full_name']) ?></strong>
+                <span class="ut-sub">@<?= e($np['username']) ?></span>
+                <?php if (!empty($np['referral_code'])): ?><span class="ut-sub"><span class="ref-code"><?= e($np['referral_code']) ?></span></span><?php endif; ?>
+              </span>
+            </td>
+            <td><span class="pill <?= $isGpRow($np) ? 'active' : '' ?>"><?= $isGpRow($np) ? 'Growth Partner' : e(role_name($np['role'])) ?></span><?= $isGpRow($np) ? '' : '<span class="ut-sub">earns no commission</span>' ?></td>
+            <td class="num"><strong class="net-total"><?= count($kids) ?></strong></td>
+            <td><span class="stage-counts">
+              <?php foreach ($byStage as $st => $n): if (!$n) continue; [$lbl, $pl] = REFERRAL_STAGES[$st]; ?>
+                <span class="pill stage-<?= e($st) ?> <?= e($pl) ?>"><?= e($lbl) ?> <?= $n ?></span>
+              <?php endforeach; ?>
+            </span></td>
+            <td class="ut-actions">
+              <button type="button" class="btn btn-sm" onclick="document.getElementById('<?= e($dlgId) ?>').showModal()">View clients →</button>
+              <dialog class="tree-dialog po-dialog po-wide" id="<?= e($dlgId) ?>" aria-labelledby="<?= e($dlgId) ?>-t">
+                <div class="tree-dlg-head">
+                  <div><span class="label"><?= count($kids) ?> client<?= count($kids) === 1 ? '' : 's' ?> · <?= e($np['referral_code'] ?? '') ?></span><h3 id="<?= e($dlgId) ?>-t"><?= e($np['full_name']) ?>'s clients</h3></div>
+                  <form method="dialog"><button class="btn btn-sm btn-ghost" type="submit">Close</button></form>
+                </div>
+                <div class="tree-dlg-body"><div class="table-scroll"><table class="users-table">
+                  <thead><tr><th scope="col">Client</th><th scope="col">Account</th><th scope="col">Pipeline</th><th scope="col">Joined</th></tr></thead>
+                  <tbody><?php foreach ($kids as $k): [$kl, $kp] = $netStatus($k); $sr = $stageOf[$k['id']] ?? ['stage' => 'pending']; ?>
+                    <tr><td><strong><?= e($k['full_name']) ?></strong><span class="ut-sub">@<?= e($k['username']) ?><?= !empty($k['company']) ? ' · ' . e($k['company']) : '' ?></span></td>
+                      <td><span class="pill <?= e($kp) ?>"><?= e($kl) ?></span></td>
+                      <td><?= referral_stage_html($sr, $pkgNameById[$sr['stage_package_id'] ?? ''] ?? null) ?></td>
+                      <td style="font-size:12px"><?= date('M j, Y', strtotime($k['created_at'])) ?></td></tr>
+                  <?php endforeach; ?></tbody>
+                </table></div></div>
+              </dialog>
+            </td>
+          </tr>
+        <?php endforeach; ?></tbody>
+      </table></div>
+      <p class="empty" id="net-cl-none" hidden>No client connections match your search or filters.</p><?php endif; ?>
+      <?php if ($unlinkedClients): ?>
+        <p class="hint" style="margin:12px 0 0"><?= count($unlinkedClients) ?> client<?= count($unlinkedClients) === 1 ? '' : 's' ?> signed up without a referral code: <?= e(implode(', ', array_map(fn($p) => $p['full_name'], array_slice($unlinkedClients, 0, 8)))) ?><?= count($unlinkedClients) > 8 ? '…' : '' ?></p>
+      <?php endif; ?>
+    <?php endif; ?>
     </div>
   </div>
 
@@ -1151,6 +1281,10 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   </div>
 
   <!-- TRANSACTIONS -->
+  <div id="panel-pipeline" class="admin-panel" data-live="panel-pipeline">
+    <?= pipeline_admin_html($token, $csrf) ?>
+  </div>
+
   <div id="panel-payouts" class="admin-panel" data-live="panel-payouts">
     <?= payout_queue_html($token, $profile, $csrf, '/dashboard-admin.php?receipt=') ?>
   </div>

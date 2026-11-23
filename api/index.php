@@ -280,7 +280,7 @@ $csrf = csrf_token();
                      pattern="(KT-?|kt-?)?[A-Za-z0-9]{3,9}" title="The characters after KT-, e.g. 000001"
                      <?= $refRequired ? 'required aria-required="true"' : '' ?>>
             </div>
-            <small id="ref-hint" style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Type only the characters after KT- (e.g. 000001). <span id="ref-why"><?= $refRequired ? 'Enter the code of the Growth Partner who invited you — you join their network.' : 'Were you referred by a Growth Partner? Enter their code so they are credited. Leave it blank if not.' ?></span></small>
+            <small id="ref-hint" style="display:block;margin-top:4px;font-size:11px;color:var(--text-dim)">Type only the characters after KT- (e.g. 000001). <span id="ref-why"><?= $refRequired ? 'Enter the code of the Growth Partner who invited you — you join their network. Client codes can\'t be used for a Growth Partner account.' : 'Were you referred by a Growth Partner? Enter their code so they are credited. Leave it blank if not.' ?></span></small>
           </div>
 
           <?= terms_checklist($old['terms'], '04 // Program terms', 'reg-submit') ?>
@@ -343,7 +343,7 @@ $csrf = csrf_token();
       if (req) req.textContent = affiliate ? '(required)' : '(optional)';
       var why = document.getElementById('ref-why');
       if (why) why.textContent = affiliate
-        ? 'Enter the code of the Growth Partner who invited you — you join their network.'
+        ? 'Enter the code of the Growth Partner who invited you — you join their network. Client codes can\'t be used for a Growth Partner account.'
         : 'Were you referred by a Growth Partner? Enter their code so they are credited. Leave it blank if not.';
     }
     if (bizField) {

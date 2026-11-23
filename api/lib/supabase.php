@@ -218,10 +218,24 @@ function supabase_sign_up(string $username, string $password, array $meta): arra
     // silently never gets credited and nobody notices.
     $referrer = null;
     if (!empty($meta['ref'])) {
-        $r = supabase_request('GET', '/rest/v1/profiles?select=id&deleted_at=is.null&referral_code=eq.' . urlencode(strtoupper(trim($meta['ref']))));
-        $referrer = $r['body'][0]['id'] ?? null;
+        $r = supabase_request('GET', '/rest/v1/profiles?select=id,role,affiliate_tier,status,kyc_status&deleted_at=is.null&referral_code=eq.' . urlencode(strtoupper(trim($meta['ref']))));
+        $refRow   = $r['body'][0] ?? null;
+        $referrer = $refRow['id'] ?? null;
         if (!$referrer) {
             return ['error' => 'That referral code does not exist. Check it, or leave it blank.', 'profile' => null];
+        }
+        // Referrals can only be sent by a verified account: a code whose
+        // owner's ID isn't approved yet is not accepted.
+        if (!kyc_approved($refRow)) {
+            return ['error' => ($meta['account_mode'] ?? 'client') === 'affiliate'
+                ? 'That referral code is not active yet — its owner has not finished ID verification. Ask them to verify their ID, then try again.'
+                : 'That referral code is not active yet — its owner has not finished ID verification. Ask them to verify, or leave the code blank.', 'profile' => null];
+        }
+        // A Growth Partner joins a Growth Partner's downline only. Clients
+        // have KT- codes too, but a client's code can't sponsor a partner
+        // (Manual §4): only a Growth Partner referral code works here.
+        if (($meta['account_mode'] ?? 'client') === 'affiliate' && !is_growth_partner_code_owner($refRow)) {
+            return ['error' => 'That is a Client code. A Growth Partner account needs the referral code of a Growth Partner — ask the partner who invited you for theirs.', 'profile' => null];
         }
     }
 
@@ -406,6 +420,14 @@ function is_client_only(?array $profile): bool
     return ($profile['role'] ?? '') === 'client' && empty($profile['affiliate_tier']) && account_mode($profile) !== 'affiliate';
 }
 
+// Whose code can sponsor a new Growth Partner: a Growth Partner account
+// (including an admin's own Unlimited one) or a legacy client row that has
+// a Growth Partner plan. Plain Client codes can't.
+function is_growth_partner_code_owner(?array $p): bool
+{
+    if (!$p) return false;
+    return ($p['role'] ?? '') === 'growth_partner' || !empty($p['affiliate_tier']);
+}
 function affiliate_only(?array $profile): bool
 {
     return is_member($profile) && account_mode($profile) === 'affiliate';
@@ -878,6 +900,14 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
     $isDeposit = $txn['type'] === 'deposit';
     $pkgName   = $txn['packages']['name'] ?? 'package';
 
+    // A client claims a package only with an approved ID.
+    if ($isDeposit) {
+        $buyer = supabase_request('GET', '/rest/v1/profiles?select=kyc_status,affiliate_tier,role,full_name&id=eq.' . urlencode($txn['user_id']), null, $token)['body'][0] ?? null;
+        if (!kyc_approved($buyer)) {
+            return ($buyer['full_name'] ?? 'This client') . '\'s ID is not approved yet — approve their KYC first, then the deposit.';
+        }
+    }
+
     if (!$isDeposit) {
         $err = activate_account($token, $txn['user_id'], $txn['packages']['tier'] ?? 'standard');
         if ($err) return $err;
@@ -900,6 +930,10 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
             'Your 50% advance deposit is confirmed and setup work can begin. Progress reports will appear in your dashboard.'
             . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
         pay_referral_commission($token, $txn);
+        // Referral pipeline: the referred client is now Approved.
+        referral_stage_set($token, $txn['user_id'], 'approved', [
+            'stage_package_id' => $txn['package_id'] ?? null, 'stage_txn_id' => $txnId, 'stage_by' => $adminId,
+        ]);
     } else {
         $tier = $txn['packages']['tier'] ?? 'standard';
         notify($token, ucfirst($tier) . ' Growth Partner plan active',
@@ -1013,12 +1047,22 @@ function pay_referral_commission(string $token, array $txn): void
     // passed further up. The sponsor must be a Growth Partner whose term
     // has not ended; nothing is paid for joining or for plan payments
     // (this runs only for approved client deposits).
+    //
+    // Where it goes:
+    //   - the referrer's upline, when that upline is an eligible Growth
+    //     Partner (an increment on that partner's earnings and Payout);
+    //   - the Main Basket, when the referrer IS an admin's own Growth
+    //     Partner account, when the upline is one, or when there is no
+    //     eligible upline.
+    if ($split['unilevel'] <= 0) return;
+    $refName = $referrer['full_name'] ?? null;
+    if (is_house_partner($referrer)) { basket_add($token, $txn, $split['unilevel'], 'referrer is an admin Growth Partner account', $refName); return; }
     $sponsorId = $referrer['referred_by'] ?? null;
-    if (!$sponsorId || $split['unilevel'] <= 0) return;
-    $sponsor = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($sponsorId), null, $token)['body'][0] ?? null;
-    if (!$sponsor || !empty($sponsor['deleted_at'])) return;
-    if (($sponsor['role'] ?? '') !== 'growth_partner' && empty($sponsor['affiliate_tier'])) return;
-    if (affiliate_state($sponsor) === 'terminated') return;
+    $sponsor   = $sponsorId ? (supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($sponsorId), null, $token)['body'][0] ?? null) : null;
+    if (!$sponsor || !empty($sponsor['deleted_at'])) { basket_add($token, $txn, $split['unilevel'], 'no upline', $refName); return; }
+    if (is_house_partner($sponsor)) { basket_add($token, $txn, $split['unilevel'], 'upline is an admin Growth Partner account', $refName); return; }
+    if (($sponsor['role'] ?? '') !== 'growth_partner' && empty($sponsor['affiliate_tier'])) { basket_add($token, $txn, $split['unilevel'], 'upline is not a Growth Partner', $refName); return; }
+    if (affiliate_state($sponsor) === 'terminated') { basket_add($token, $txn, $split['unilevel'], "upline's Growth Partner term has ended", $refName); return; }
 
     $ul = supabase_request('POST', '/rest/v1/transactions', [
         'user_id'        => $sponsorId,
@@ -1049,6 +1093,13 @@ function reject_activation(string $token, string $txnId, string $adminId, string
         'notes'  => trim('Rejected by admin. ' . $reason),
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return $res['error'];
+
+    if ($txn['type'] === 'deposit') {
+        referral_stage_set($token, $txn['user_id'], 'rejected', [
+            'stage_package_id' => $txn['package_id'] ?? null, 'stage_txn_id' => $txnId, 'stage_by' => $adminId,
+            'stage_reason' => $reason !== '' ? $reason : 'Deposit not approved',
+        ]);
+    }
 
     audit_log($token, $txn['type'] === 'deposit' ? 'reject_deposit' : 'reject_activation', 'transaction', $txnId, 'Rejected payment ref ' . ($txn['payment_ref'] ?? '—') . ($reason !== '' ? ' — ' . $reason : ''));
     notify($token, $txn['type'] === 'deposit' ? 'Deposit not approved' : 'Plan request not approved',
@@ -1274,7 +1325,9 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
         $link   = APP_URL . '/index.php?ref=' . urlencode($code);
         $out .= '<section class="card share-card" id="share" style="margin-bottom:12px">'
               . '<span class="label">Your referral code</span>';
-        if ($canRefer) {
+        if (!kyc_approved($profile)) {
+            $out .= '<div style="margin-top:8px">' . kyc_gate_notice($profile, 'referrals') . '</div>';
+        } elseif ($canRefer) {
             $out .= '<div class="share share-code" style="margin-top:8px">'
                   .   '<div class="code-box"><span class="code-prefix" aria-hidden="true">KT-</span>'
                   .   '<input id="share-code" type="text" readonly value="' . e($suffix) . '" aria-label="Referral code, the characters after KT-"></div>'
@@ -1355,7 +1408,7 @@ function clients_referred_html(string $token, array $profile): string
     $clients = is_array($clients) ? $clients : [];
 
     $out = '<section class="card" id="clients" style="margin-bottom:12px"><h2>Clients referred</h2>'
-         . '<p class="hint" style="margin:0 0 12px">Clients who signed up with your code. You earn commission when a client pays the 50% advance deposit on a package — monthly fees are not commissionable.</p>';
+         . '<p class="hint" style="margin:0 0 12px">Clients who signed up with your code. Each moves <strong>Pending → Converted (package) → Approved</strong>, or is Rejected with a reason — the admin decides. On Approved your Outright Commission is credited to your Payout balance. Monthly fees are not commissionable.</p>';
     if (!$clients) {
         return $out . '<p class="empty">No clients yet. Share your <a href="/dashboard-affiliate.php?view=share">client sign-up link</a> — clients who use your code appear here.</p></section>';
     }
@@ -1372,6 +1425,10 @@ function clients_referred_html(string $token, array $profile): string
     }
     $total = array_sum($earned);
     $active = count(array_filter($clients, fn($c) => $c['status'] === 'accepted'));
+    // Referral pipeline stage per client (Pending > Converted > Approved / Rejected).
+    $stages = supabase_request('GET', '/rest/v1/referrals?select=referred_id,stage,stage_reason,stage_package_id,package:packages!referrals_stage_package_id_fkey(name)&level=eq.1&referrer_id=eq.' . $uid, null, $token)['body'] ?? [];
+    $stageOf = [];
+    foreach (is_array($stages) ? $stages : [] as $st) $stageOf[$st['referred_id']] = $st;
 
     $out .= '<div class="downline-levels" style="margin-bottom:10px"><span class="chip">' . count($clients) . ' referred</span>'
           . '<span class="chip">' . $active . ' active</span>'
@@ -1391,7 +1448,9 @@ function clients_referred_html(string $token, array $profile): string
         $out .= '<tr><td><strong>' . e($c['full_name']) . '</strong>'
               . (!empty($c['company']) ? '<span class="ut-sub">' . e($c['company']) . '</span>' : '') . '</td>'
               . '<td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td>'
-              . '<td><span class="pill ' . e($pill) . '">' . e($label) . '</span></td>'
+              . '<td>' . ($c['status'] === 'accepted'
+                    ? referral_stage_html($stageOf[$c['id']] ?? ['stage' => 'pending'], $stageOf[$c['id']]['package']['name'] ?? null)
+                    : '<span class="pill ' . e($pill) . '">' . e($label) . '</span>') . '</td>'
               . '<td>' . ($paid[$c['id']] ?? 0) . '</td>'
               . '<td style="color:var(--green)">$' . number_format($earned[$c['id']] ?? 0, 2) . '</td></tr>';
     }
@@ -1755,6 +1814,32 @@ const KYC_ID_TYPES = [
 ];
 
 // Status banner + link to /kyc.php, shown on every member dashboard.
+// KYC gate: a Growth Partner needs an approved ID before sending referrals
+// (code shown, code accepted at sign-up); a Client needs one before claiming
+// a package (paying / an admin approving the deposit). Admins' own
+// Unlimited partner accounts and team accounts are exempt.
+function kyc_approved(?array $p): bool
+{
+    if (!$p) return false;
+    return ($p['kyc_status'] ?? '') === 'approved' || tier_unlimited($p) || is_team($p);
+}
+
+// Notice explaining what is locked until the ID is approved.
+//   $what: 'referrals' (Growth Partner) | 'packages' (Client)
+function kyc_gate_notice(array $profile, string $what): string
+{
+    $status = $profile['kyc_status'] ?? 'not_submitted';
+    $locked = $what === 'referrals'
+        ? 'You can send referrals once your ID is approved — your referral code and links unlock then, and sign-ups with your code are accepted.'
+        : 'You can claim a package once your ID is approved — paying the 50% deposit unlocks then.';
+    [$cls, $lead, $cta] = match ($status) {
+        'pending'  => ['alert-warn',  'Your ID is in review.', '<a href="/kyc.php">View submission →</a>'],
+        'rejected' => ['alert-error', 'Your ID check was not approved.', '<a href="/kyc.php">Submit again →</a>'],
+        default    => ['alert-warn',  'Verify your ID first.', '<a href="/kyc.php">Verify your ID →</a>'],
+    };
+    return '<div class="alert ' . $cls . ' kyc-gate"><strong>' . e($lead) . '</strong> ' . e($locked) . ' ' . $cta . '</div>';
+}
+
 function kyc_banner(array $profile): string
 {
     return match ($profile['kyc_status'] ?? 'not_submitted') {
@@ -2073,3 +2158,5 @@ function networth_html(string $token, array $profile, string $period = 'month', 
     $html .= '<p class="hint nw-note">Networth = Outright commission (10% of your clients\' deposits) + Uni-Level commission (5% of your direct Co-growth Partners\' Outright). The forecast assumes the pace so far continues; it is an estimate, not guaranteed income.</p></section>';
     return $html;
 }
+
+require_once __DIR__ . '/pipeline.php';

@@ -40,6 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             $errors[] = 'That package is no longer available.';
         } elseif (isset($pendingPkg[$pkg['id']])) {
             $errors[] = 'You already have a deposit for this package waiting for approval.';
+        } elseif (!kyc_approved($profile)) {
+            $errors[] = 'Verify your ID before claiming a package — the deposit unlocks once your ID is approved.';
         } elseif (!$payReady) {
             $errors[] = 'Payments are not open yet. Please contact your KAM Team contact.';
         } elseif (!preg_match('/^[A-Za-z0-9 #_\-]{4,64}$/', $refNo)) {
@@ -51,6 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 'status' => 'pending', 'payment_ref' => $refNo, 'notes' => '50% advance deposit — ' . $pkg['name'],
             ], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
+                referral_stage_set($token, $userId, 'converted', ['stage_package_id' => $pkg['id']]);
                 audit_log($token, 'deposit_submitted', 'profile', $userId, $pkg['name'] . ' deposit $' . number_format($amt, 2) . ' ref ' . $refNo);
                 notify($token, 'Deposit to verify', $profile['full_name'] . ' paid the $' . number_format($amt, 2) . ' advance deposit for ' . $pkg['name'] . ' — ref ' . $refNo . '.', null, 'admin', '/dashboard-admin.php#approvals');
                 flash('success', 'Deposit submitted. An admin will verify it, then setup work begins.');
@@ -115,6 +118,7 @@ $contact   = !empty($profile['assigned_admin'])
 ], 'Client') ?>
 <main class="wrap" id="main" tabindex="-1">
   <?= ui_alerts($notice, $errors) ?>
+  <?= kyc_approved($profile) ? '' : kyc_gate_notice($profile, 'packages') ?>
 
   <?= ui_page_title(
         'Client // ' . e($profile['company'] ?: $profile['username']),
@@ -159,7 +163,9 @@ $contact   = !empty($profile['assigned_admin'])
           <details class="paywall">
             <summary class="btn btn-solid">Pay 50% deposit — $<?= number_format($dep, 2) ?> →</summary>
             <div class="paywall-body">
-              <?php if (!$payReady): ?>
+              <?php if (!kyc_approved($profile)): ?>
+                <p class="alert alert-warn" style="margin:0">Verify your ID to claim this package — the deposit unlocks once your ID is approved. <a href="/kyc.php">Verify now →</a></p>
+              <?php elseif (!$payReady): ?>
                 <p class="alert alert-warn" style="margin:0">Payments aren't open yet — please contact your KAM Team contact.</p>
               <?php else: ?>
                 <span class="label">Step 1 // Scan &amp; pay exactly $<?= number_format($dep, 2) ?></span>

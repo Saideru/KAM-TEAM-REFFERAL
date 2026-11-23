@@ -521,10 +521,82 @@
     tick();
   }
 
+  /* ------------------------------------------------------------------
+   * Search + filter chips for a table:
+   *   <div class="net-tools" data-net-for="TABLE_ID">
+   *     <input type="search" class="net-q">
+   *     <div class="filter-bar"><button data-net-group="status" data-net-val="all">…
+   *     <span class="net-count"></span>
+   *   </div>
+   * Rows carry data-q="searchable text" and data-tags="status:active plan:basic".
+   * State is kept per table in memory and re-applied after a live refresh.
+   * ---------------------------------------------------------------- */
+  function netFilters() {
+    var state = {};
+
+    function stateFor(id) { return state[id] || (state[id] = { q: '', g: {} }); }
+
+    function apply(tools) {
+      var id = tools.dataset.netFor;
+      var table = document.getElementById(id);
+      if (!table) return;
+      var st = stateFor(id);
+      var input = $('.net-q', tools);
+      if (input && input.value !== st.q) input.value = st.q;
+      var words = st.q.toLowerCase().split(/\s+/).filter(Boolean);
+      var groups = Object.keys(st.g).filter(function (k) { return st.g[k] && st.g[k] !== 'all'; });
+      // Only the table's own rows — not rows of tables inside its pop-ups.
+      var rows = table.tBodies[0] ? Array.prototype.slice.call(table.tBodies[0].rows) : [], shown = 0;
+      rows.forEach(function (tr) {
+        var text = (tr.dataset.q || tr.textContent).toLowerCase();
+        var tags = ' ' + (tr.dataset.tags || '') + ' ';
+        var ok = words.every(function (w) { return text.indexOf(w) !== -1; })
+              && groups.every(function (k) { return tags.indexOf(' ' + k + ':' + st.g[k] + ' ') !== -1; });
+        tr.hidden = !ok;
+        if (ok) shown++;
+      });
+      $$('[data-net-group]', tools).forEach(function (b) {
+        var on = (st.g[b.dataset.netGroup] || 'all') === b.dataset.netVal;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      var count = $('.net-count', tools);
+      if (count) count.textContent = shown === rows.length ? rows.length + ' shown' : shown + ' of ' + rows.length + ' shown';
+      var none = document.getElementById(id + '-none');
+      if (none) none.hidden = shown > 0;
+    }
+    function applyAll() { $$('.net-tools[data-net-for]').forEach(apply); }
+
+    on(document, 'input', function (ev) {
+      var input = ev.target.closest && ev.target.closest('.net-tools .net-q');
+      if (!input) return;
+      var tools = input.closest('.net-tools');
+      stateFor(tools.dataset.netFor).q = input.value;
+      apply(tools);
+    });
+    on(document, 'click', function (ev) {
+      var b = ev.target.closest && ev.target.closest('.net-tools [data-net-group]');
+      if (!b) return;
+      var tools = b.closest('.net-tools');
+      stateFor(tools.dataset.netFor).g[b.dataset.netGroup] = b.dataset.netVal;
+      apply(tools);
+    });
+    on(document, 'keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      var input = ev.target.closest && ev.target.closest('.net-tools .net-q');
+      if (!input || !input.value) return;
+      input.value = '';
+      stateFor(input.closest('.net-tools').dataset.netFor).q = '';
+      apply(input.closest('.net-tools'));
+    });
+    on(document, 'live:updated', applyAll);
+    applyAll();
+  }
+
   /* ---------------------------------------------------------------- */
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
-     countdowns, tableHints, copyButtons, adminPanels, tableFilters,
+     countdowns, tableHints, copyButtons, adminPanels, tableFilters, netFilters,
      statusFields, idleWatch, liveRefresh].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });

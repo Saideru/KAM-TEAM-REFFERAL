@@ -249,7 +249,7 @@ foreach ($pages as $key => $pg) {
   <?php endif; ?>
 
   <?= ui_alerts($notice, $errors) ?>
-  <?= $gated ? kyc_banner($profile) : '' ?>
+  <?= $gated ? kyc_banner($profile) : (kyc_approved($profile) || $view === 'verify' ? '' : kyc_gate_notice($profile, 'referrals')) ?>
 
   <?php if (!$gated && $view === 'activate'): ?>
     <section class="card activate-card" id="activate-client" style="margin-bottom:16px">
