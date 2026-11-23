@@ -188,6 +188,7 @@ if (!$switchedFromAdmin && $isAdmin) {
 <?= ui_topbar([
     'csrf'       => $csrf,
     'bell'       => notif_bell($token, $profile, $csrf),
+    'help'       => tutorial_html('growth_partner', $token),
     'welcome'    => $profile['full_name'] ?? '',
     'role'       => ($switchedFromAdmin ? 'Admin · Growth Partner' : ($isAdmin ? 'Admin' : 'Growth Partner')) . ($tier ? ' · ' . tier_label($tier) : ''),
     'role_class' => $switchedFromAdmin || $isAdmin ? 'admin' : 'affiliate',

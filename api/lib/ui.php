@@ -13,6 +13,7 @@
 
 require_once __DIR__ . '/supabase.php';
 require_once __DIR__ . '/logo.php';
+require_once __DIR__ . '/tutorial.php';
 
 // ---------------------------------------------------------------------
 // Assets
@@ -105,7 +106,7 @@ function ui_foot(string $scripts = ''): string
 function ui_topbar(array $o): string
 {
     $right = (!empty($o['welcome']) ? '<span class="topbar-welcome">Welcome <em>' . e((string) $o['welcome']) . '</em></span>' : '')
-           . ($o['bell'] ?? '');
+           . ($o['bell'] ?? '') . ($o['help'] ?? '');
 
     if (!empty($o['switch'])) {
         $sw   = $o['switch'];

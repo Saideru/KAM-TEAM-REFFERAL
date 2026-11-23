@@ -1367,3 +1367,16 @@ body.idle-warning { overflow: hidden; }
   html.nav-ready .wrap table.stack td .ut-sub { flex-basis: 100%; text-align: right; }
 }
 @media (max-width: 640px) { html.nav-ready .wrap table.stack td:first-child .ut-sub { text-align: left; } }
+
+/* Topbar help (?) + tutorial dialog */
+.help-btn { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface-2); color: var(--text-muted); font: 700 16px/1 var(--font); cursor: pointer; }
+.help-btn:hover, .help-btn:focus-visible { border-color: var(--rust); color: var(--rust); }
+.tut-dialog { width: min(720px, calc(100vw - 32px)); }
+.tut-body { padding: 8px 18px 18px; max-height: 70vh; overflow-y: auto; }
+.tut-ch { border-bottom: 1px solid var(--border-light); }
+.tut-ch > summary { padding: 14px 0; font-weight: 600; font-size: 16px; cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+.tut-ch > summary::-webkit-details-marker { display: none; }
+.tut-ch > summary::after { content: '+'; color: var(--rust); font-size: 20px; }
+.tut-ch[open] > summary::after { content: '−'; }
+.tut-ch ul { margin: 0 0 14px; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; line-height: 1.55; color: var(--text-muted); }
+.tut-ch li strong { color: var(--text); }

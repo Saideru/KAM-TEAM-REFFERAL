@@ -280,6 +280,7 @@ if ($view === 'report') {
 <?= ui_topbar([
     'csrf'       => $csrf,
     'bell'       => notif_bell($token, $profile, $csrf),
+    'help'       => tutorial_html($profile['role'] === 'admin' ? 'admin' : 'staff', $token),
     'role'       => role_name($profile['role']),
     'role_class' => $profile['role'],
 ]) ?>

@@ -94,6 +94,7 @@ $contact   = !empty($profile['assigned_admin'])
 <?= ui_topbar([
     'csrf'       => $csrf,
     'bell'       => notif_bell($token, $profile, $csrf),
+    'help'       => tutorial_html('client', $token),
     'role'       => 'Client',
     'role_class' => 'client',
     // Switch to the Growth Partner side. Only link out: the Client

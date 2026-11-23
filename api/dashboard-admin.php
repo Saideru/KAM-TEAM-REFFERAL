@@ -650,6 +650,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 <?= ui_topbar([
     'csrf'       => $csrf,
     'bell'       => notif_bell($token, $profile, $csrf),
+    'help'       => tutorial_html('admin', $token),
     'role'       => 'Admin',
     'role_class' => 'admin',
     // Soft toggle → this admin's own Growth Partner account (linked row).

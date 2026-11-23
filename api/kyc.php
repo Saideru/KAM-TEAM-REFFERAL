@@ -77,6 +77,7 @@ $badge = [
 ]) ?>
 <?= ui_topbar([
     'csrf'  => $csrf,
+    'help'  => tutorial_html($profile['role'] === 'client' ? 'client' : 'growth_partner', $token),
     'links' => [['label' => 'Dashboard', 'href' => $dashUrl]],
 ]) ?>
 
