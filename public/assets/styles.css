@@ -1197,3 +1197,139 @@ body.idle-warning { overflow: hidden; }
 .net-chips .filter-chip { padding: 4px 10px; font-size: var(--text-2xs); }
 .net-count { margin-left: auto; font-family: var(--font); font-size: var(--text-xs); color: var(--text-muted); }
 .kyc-need { width: min(460px, calc(100vw - 32px)); }
+
+/* =====================================================================
+   PHONE MODE — every dashboard (Admin, Staff, Growth Partner, Client)
+   ≤900px: ☰ drawer sidebar, compact top bar, single-width content.
+   ≤640px: tables become stacked cards (labels from app.js tableLabels).
+   ===================================================================== */
+.nav-toggle { display: none; }
+.side-close { display: none; }
+.nav-backdrop[hidden] { display: none; }
+
+@media (max-width: 900px) {
+  /* No sideways scrolling, ever (clip keeps the sticky top bar working). */
+  html, body { overflow-x: clip; }
+
+  /* ---- Top bar ---- */
+  .topbar-inner { padding: 8px 12px; gap: 8px; }
+  .topbar .lockup { margin-right: auto; min-width: 0; }
+  .topbar .lockup .kam-mark { width: 96px; }
+  .topbar-actions { flex-wrap: nowrap; gap: 6px; min-width: 0; }
+  .topbar-actions .role-label, .topbar-welcome { display: none; }
+  .topbar-actions .btn-sm { padding: 8px 10px; }
+  .acct-switch-label { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  html.nav-ready .nav-toggle {
+    display: inline-flex; flex-direction: column; justify-content: center; gap: 4px; flex: none;
+    width: 42px; height: 42px; padding: 0 11px; margin-right: 2px;
+    border: 1px solid var(--border-light); border-radius: 8px; background: var(--surface-2); cursor: pointer;
+  }
+  html.nav-ready .nav-toggle span { display: block; height: 2px; border-radius: 2px; background: var(--text); transition: transform .2s, opacity .2s; }
+  html.nav-ready body.nav-open .nav-toggle span:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+  html.nav-ready body.nav-open .nav-toggle span:nth-child(2) { opacity: 0; }
+  html.nav-ready body.nav-open .nav-toggle span:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+  .nav-toggle:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+
+  /* ---- Sidebar → drawer ---- */
+  html.nav-ready .shell { display: block; }
+  html.nav-ready .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 300;
+    width: min(310px, 86vw); height: 100vh; height: 100dvh;
+    padding: 16px 12px 24px; overflow-y: auto; overscroll-behavior: contain;
+    border-right: 1px solid #000; border-bottom: 0;
+    transform: translateX(-104%); visibility: hidden;
+    transition: transform .26s cubic-bezier(.3,.7,.3,1), visibility 0s linear .26s;
+    box-shadow: 8px 0 30px rgba(0,0,0,.35);
+  }
+  html.nav-ready body.nav-open .sidebar { transform: none; visibility: visible; transition: transform .26s cubic-bezier(.3,.7,.3,1); }
+  html.nav-ready .side-title { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 14px 12px; }
+  html.nav-ready .side-close {
+    display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;
+    border: 1px solid #333; border-radius: 8px; background: none; color: #e9e4da; font-size: 24px; line-height: 1; cursor: pointer;
+  }
+  html.nav-ready .side-nav { flex-direction: column; overflow: visible; }
+  html.nav-ready .side-link, html.nav-ready .side-link.admin-tab {
+    width: 100%; flex: initial; white-space: normal; font-size: 16px; padding: 13px 14px;
+    border-bottom: 0; border-left: 4px solid transparent; border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  html.nav-ready .side-link.active, html.nav-ready .side-link.admin-tab.active { border-left-color: var(--orange); border-bottom-color: transparent; }
+  .nav-backdrop { position: fixed; inset: 0; z-index: 290; background: rgba(17, 17, 17, .55); backdrop-filter: blur(2px); }
+  body.nav-open { overflow: hidden; }
+
+  /* ---- Content fits the width ---- */
+  .shell > .wrap { max-width: none; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid-3 { grid-template-columns: minmax(0, 1fr); }
+  .tier-cards { grid-template-columns: minmax(0, 1fr); }
+  .card .big { font-size: 26px; overflow-wrap: anywhere; }
+  .wrap h1 { font-size: clamp(26px, 7vw, 36px); line-height: 1.12; }
+  .net-head, .po-card-head, .nw-head { align-items: flex-start; }
+  .seg { max-width: 100%; }
+  dialog.tree-dialog { width: calc(100vw - 20px); max-width: none; max-height: calc(100dvh - 24px); margin: auto; }
+}
+
+@media (max-width: 640px) {
+  .cd-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cd-grid .cd-num, .cd-grid strong { font-size: 30px; }
+  .po-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .net-tools { padding: 10px; gap: 8px; }
+  .net-count { margin-left: 0; width: 100%; }
+  .net-chips { flex-wrap: wrap; }
+  .acct-toggle-side { display: none; }
+  .acct-toggle { padding: 8px 10px; }
+
+  /* ---- Tables → stacked cards ---- */
+  html.nav-ready .wrap table.stack, html.nav-ready .wrap table.stack tbody { display: block; width: 100%; }
+  html.nav-ready .wrap table.stack thead { display: none; }
+  html.nav-ready .wrap table.stack tr {
+    display: block; margin: 0 0 10px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  }
+  html.nav-ready .wrap table.stack tr[hidden] { display: none; }
+  html.nav-ready .wrap table.stack tr.stack-full { padding: 8px 12px; background: transparent; border-style: dashed; }
+  html.nav-ready .wrap table.stack td {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+    padding: 6px 0; border: 0; border-top: 1px dashed var(--border); text-align: right; width: auto;
+  }
+  html.nav-ready .wrap table.stack td::before {
+    content: attr(data-label); flex: none; max-width: 42%; padding-top: 2px; text-align: left;
+    font-family: var(--font); font-size: var(--text-2xs); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+  }
+  html.nav-ready .wrap table.stack td[data-label=""]::before { display: none; }
+  /* First cell = the card's title. */
+  html.nav-ready .wrap table.stack td:first-child { display: block; border-top: 0; padding-top: 0; text-align: left; }
+  html.nav-ready .wrap table.stack td:first-child::before { display: none; }
+  html.nav-ready .wrap table.stack tr.stack-full td { display: block; border: 0; padding: 0; text-align: left; }
+  html.nav-ready .wrap table.stack td.num { font-variant-numeric: tabular-nums; }
+  html.nav-ready .wrap table.stack .ut-sub { display: block; }
+  html.nav-ready .wrap table.stack .ut-actions { flex-direction: column; align-items: stretch; }
+  html.nav-ready .wrap table.stack .ut-actions::before { margin-bottom: 4px; }
+  html.nav-ready .wrap table.stack .ut-actions > *, html.nav-ready .wrap table.stack .ut-actions form { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+  html.nav-ready .wrap table.stack .ut-actions select, html.nav-ready .wrap table.stack .ut-actions input:not([type=hidden]) { flex: 1 1 140px; min-width: 0; max-width: none; }
+  html.nav-ready .wrap .table-scroll { overflow-x: visible; }
+  html.nav-ready .wrap .table-scroll.has-more::after { display: none; }
+  html.nav-ready .wrap table.stack .stage-flow, html.nav-ready .wrap table.stack .stage-counts { justify-content: flex-end; }
+}
+
+@media (max-width: 380px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .po-row { grid-template-columns: minmax(0, 1fr); }
+  .topbar .lockup .kam-mark { width: 80px; }
+}
+@media (max-width: 640px) {
+  html.nav-ready .wrap table.stack { min-width: 0 !important; table-layout: auto; }
+  html.nav-ready .wrap table.stack td > * { min-width: 0; }
+}
+@media (max-width: 640px) {
+  /* Toggle keeps a short label of the side you're on. */
+  .acct-toggle { gap: 6px; padding: 8px 10px; }
+  .acct-toggle::after { content: 'Admin'; font-weight: 600; color: var(--text); }
+  .acct-toggle.is-on::after { content: 'GP'; }
+  .topbar .lockup .kam-mark { width: 84px; }
+  /* Card rows: label on the left, the values packed on the right. */
+  html.nav-ready .wrap table.stack td { justify-content: flex-end; flex-wrap: wrap; gap: 4px 8px; }
+  html.nav-ready .wrap table.stack td::before { margin-right: auto; }
+  html.nav-ready .wrap table.stack td .ut-sub { flex-basis: 100%; text-align: right; }
+}
+@media (max-width: 640px) { html.nav-ready .wrap table.stack td:first-child .ut-sub { text-align: left; } }

@@ -505,13 +505,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 
     if ($act === 'save_commission') {
         $pct = $_POST['commission_pct'] ?? '';
-        if (!is_numeric($pct) || (float) $pct < 0 || (float) $pct > 100) {
-            $errors[] = 'Commission rate must be a number between 0 and 100.';
+        $ul  = $_POST['upline_pct'] ?? '';
+        if (!is_numeric($pct) || !is_numeric($ul) || (float) $pct < 0 || (float) $ul < 0 || (float) $pct + (float) $ul > 100) {
+            $errors[] = 'Rates must be numbers from 0, and together no more than 100.';
         } else {
-            $new = pct_label(round((float) $pct, 2));
+            $new   = pct_label(round((float) $pct, 2));
+            $newUl = pct_label(round((float) $ul, 2));
             set_setting($token, 'referral_commission_pct', $new);
-            audit_log($token, 'commission_rate', 'app_settings', null, 'Outright commission set to ' . $new . '% of the advance deposit');
-            flash('success', 'Outright commission set to ' . $new . '% of the advance deposit.');
+            set_setting($token, 'upline_commission_pct', $newUl);
+            audit_log($token, 'commission_rate', 'app_settings', null, 'Commission set to ' . $new . '% referrer + ' . $newUl . '% upline of the advance deposit');
+            flash('success', 'Commission set: ' . $new . '% to the referrer + ' . $newUl . '% to their upline, of each advance deposit.');
             header('Location: /dashboard-admin.php#payment'); exit;
         }
     }
@@ -602,6 +605,7 @@ $editPkg  = $pick($allPkgs, 'edit_pkg');
 $editSvc  = $pick($allCS, 'edit_svc');
 $pay     = get_settings($token, ['payment_qr', 'payment_account', 'payment_instructions']);
 $comPct  = commission_pct($token);
+$ulPct   = unilevel_pct($token);
 
 // Full rows (images included) only for the queue actually being reviewed.
 $kycRes     = supabase_request('GET', '/rest/v1/kyc_submissions?select=*,profiles!kyc_submissions_user_id_fkey(full_name,username,role)&status=eq.pending&order=created_at.asc', null, $token);
@@ -878,7 +882,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
     <div class="card"><h2>Payments to verify</h2>
       <?php if ($nextUp): ?><p class="roulette-next">Next approved plan goes to <strong><?= e($nextUp) ?></strong> (roulette)</p><?php endif; ?>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px"><strong>Growth Partner plans</strong> — Basic (free) or Standard (US$100: first plan, upgrade, or +2-year renewal); never commissionable. <strong>Client deposits</strong> — the 50% advance deposit on a service package; approving pays the referrer's Outright Commission (<?= e(pct_label($comPct)) ?>% of the deposit) and adds 3 months to a Growth Partner referrer's term. Check the reference number in your payment app first.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px"><strong>Growth Partner plans</strong> — Basic (free) or Standard (US$100: first plan, upgrade, or +2-year renewal); never commissionable. <strong>Client deposits</strong> — the 50% advance deposit on a service package; approving pays the referrer's Outright Commission (<?= e(pct_label($comPct)) ?>% of the deposit) and their upline's Uni-Level (<?= e(pct_label($ulPct)) ?>%) and adds 3 months to a Growth Partner referrer's term. Check the reference number in your payment app first.</p>
       <?php if (!$pendingPayments): ?><p class="empty">No plan requests waiting.</p>
       <?php else: ?><div class="table-scroll"><table>
         <thead><tr><th>User</th><th>For</th><th>Amount</th><th>Reference</th><th>Submitted</th><th>Decision</th></tr></thead>
@@ -981,17 +985,21 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
   <!-- PAYMENT SETTINGS -->
   <div id="panel-payment" class="admin-panel" data-live="panel-payment">
-    <div class="card" style="margin-bottom:12px"><h2>Outright commission</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a client who signed up with a referral code pays the 50% advance deposit on a service package, the referrer (Growth Partner or client) earns this percentage of the deposit — Manual §3.1 sets it at 10%. Growth Partner plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
+    <div class="card" style="margin-bottom:12px"><h2>Commission split</h2>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a referred client pays the 50% advance deposit on a service package, the commission is split: the <strong>referring Growth Partner</strong> earns the Outright rate and <strong>their upline</strong> earns the Uni-Level rate — both as a % of the deposit (default 7.5% + 2.5% = 10%). When the upline is an admin's own Growth Partner account, or there is none, the upline share goes to the Main Basket. Plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
       <form method="post">
         <input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="save_commission">
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
           <div class="field" style="margin:0">
-            <label for="com-pct">Commission rate (%)</label>
+            <label for="com-pct">Referrer — Outright (%)</label>
             <input id="com-pct" name="commission_pct" type="number" min="0" max="100" step="0.1" value="<?= e(pct_label($comPct)) ?>" style="width:120px">
           </div>
-          <button class="btn btn-sm btn-solid" type="submit">Save rate →</button>
-          <span style="font-size:12px;color:var(--text-dim)">A $1,000 deposit (on a $2,000 setup fee) pays the referrer $<?= number_format(1000 * $comPct / 100, 2) ?>.</span>
+          <div class="field" style="margin:0">
+            <label for="ul-pct">Upline — Uni-Level (%)</label>
+            <input id="ul-pct" name="upline_pct" type="number" min="0" max="100" step="0.1" value="<?= e(pct_label($ulPct)) ?>" style="width:120px">
+          </div>
+          <button class="btn btn-sm btn-solid" type="submit">Save rates →</button>
+          <span style="font-size:12px;color:var(--text-dim)">A $1,000 deposit (on a $2,000 setup fee) pays the referrer $<?= number_format(1000 * $comPct / 100, 2) ?> + the upline $<?= number_format(1000 * $ulPct / 100, 2) ?> = $<?= number_format(1000 * ($comPct + $ulPct) / 100, 2) ?>.</span>
         </div>
       </form>
     </div>
@@ -1027,7 +1035,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       //   Growth Partners — partner-to-partner downlines (who sponsored whom)
       //   Clients         — which account each referred client is connected to
       // Built from profiles.referred_by. Status follows the account itself.
-      $netMode = ($_GET['net'] ?? '') === 'clients' ? 'clients' : 'partners';
+      $netMode = in_array($_GET['net'] ?? '', ['clients', 'all']) ? ($_GET['net']) : 'partners';
       $isGpRow = fn(array $p) => ($p['role'] ?? '') === 'growth_partner' || !empty($p['affiliate_tier']);
       $netById = [];
       foreach ($liveProfiles as $np) $netById[$np['id']] = $np;
@@ -1100,12 +1108,14 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <div class="net-head">
         <h2 style="margin:0">Referral network</h2>
         <nav class="seg" aria-label="Network view">
+          <a class="seg-btn<?= $netMode === 'all' ? ' is-on' : '' ?>" href="?net=all#referrals"<?= $netMode === 'all' ? ' aria-current="true"' : '' ?>>All <span class="seg-n"><?= count($gpRows) + $totalClientsLinked ?></span></a>
           <a class="seg-btn<?= $netMode === 'partners' ? ' is-on' : '' ?>" href="?net=partners#referrals"<?= $netMode === 'partners' ? ' aria-current="true"' : '' ?>>Growth Partners <span class="seg-n"><?= count($gpRows) ?></span></a>
           <a class="seg-btn<?= $netMode === 'clients' ? ' is-on' : '' ?>" href="?net=clients#referrals"<?= $netMode === 'clients' ? ' aria-current="true"' : '' ?>>Clients <span class="seg-n"><?= $totalClientsLinked ?></span></a>
         </nav>
       </div>
 
-    <?php if ($netMode === 'partners'): ?>
+    <?php if ($netMode === 'partners' || $netMode === 'all'): ?>
+      <?php if ($netMode === 'all'): ?><h3 style="margin:16px 0 4px;font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;opacity:.6">Growth Partners</h3><?php endif; ?>
       <p class="hint" style="margin:10px 0 12px">Growth Partner connections: who sponsored whom. Direct and Total count partners only (every level below); clients are in the Clients view. Status follows the account.</p>
       <?php if (!$gpRows): ?><p class="empty">No Growth Partners yet.</p>
       <?php else: ?>
@@ -1161,7 +1171,9 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       </table></div>
       <p class="empty" id="net-gp-none" hidden>No Growth Partners match your search or filters.</p><?php endif; ?>
 
-    <?php else: ?>
+    <?php endif; ?>
+    <?php if ($netMode === 'clients' || $netMode === 'all'): ?>
+      <?php if ($netMode === 'all'): ?><h3 style="margin:16px 0 4px;font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;opacity:.6">Clients</h3><?php endif; ?>
       <p class="hint" style="margin:10px 0 12px">Client connections: every referred client and the account they are connected to (the code they signed up with). Each row lists that account's clients and where they are in the pipeline.</p>
       <?php if (!$cliRows): ?><p class="empty">No clients are connected to a referrer yet.</p>
       <?php else: ?>

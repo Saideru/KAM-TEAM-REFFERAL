@@ -385,7 +385,7 @@ function payout_page_html(string $token, array $profile, string $csrf): string
         foreach ($coms as $c) {
             $isUl = str_contains((string) ($c['notes'] ?? ''), 'Uni-Level');
             $h .= '<tr><td><span class="ref-code">' . e(receipt_no('commission', $c['id'])) . '</span></td>'
-                . '<td><span class="pill ' . ($isUl ? 'completed' : 'active') . '">' . ($isUl ? 'Uni-Level 5%' : 'Outright 10%') . '</span></td>'
+                . '<td><span class="pill ' . ($isUl ? 'completed' : 'active') . '">' . e(commission_label($c['notes'] ?? '')[1]) . '</span></td>'
                 . '<td>' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
                 . '<td class="num"><strong>' . $money((float) $c['amount']) . '</strong></td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td>'
                 . '<td class="ut-actions"><a class="btn btn-sm" href="' . e($rcpt . $c['id']) . '" download>Download</a></td></tr>';
@@ -432,9 +432,9 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
         $kind = $id === 'sample-payout' ? 'payout' : 'commission';
         $t = [
             'id' => '5a3f9c21-0000-0000-0000-000000000000', 'type' => $kind, 'status' => 'completed',
-            'amount' => $kind === 'payout' ? 486.25 : 50.00,
+            'amount' => $kind === 'payout' ? 486.25 : 37.50,
             'created_at' => date('c', strtotime('-3 days')), 'reviewed_at' => date('c'),
-            'notes' => $kind === 'payout' ? 'Method: Crypto | Network: USDT-TRC20 | To: TQ7x9mSampleWalletAddress4fK2' : '10% Outright Commission on Sample Client\'s deposit',
+            'notes' => $kind === 'payout' ? 'Method: Crypto | Network: USDT-TRC20 | To: TQ7x9mSampleWalletAddress4fK2' : '7.5% Outright Commission on the advance deposit of Sample Client Co.',
             'payment_ref' => $kind === 'payout' ? '0x9f3c…sample…a71e' : null,
             'owner' => ['full_name' => 'Sample Partner', 'username' => 'sample', 'referral_code' => 'KT-000000'],
             'source' => ['full_name' => 'Sample Client Co.'], 'packages' => ['name' => 'Google SEO'],
@@ -502,10 +502,11 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
     $rows = [];
     if ($kind === 'commission') {
         $isUl = str_contains((string) $t['notes'], 'Uni-Level');
-        $rows[] = [$isUl ? 'Uni-Level Commission — 5% (Level 1)' : 'Outright Commission — 10% of advance deposit', $money($t['amount']), true];
+        [, $typeLabel] = commission_label($t['notes']);
+        $rows[] = [$isUl ? $typeLabel . ' — upline share of the advance deposit' : $typeLabel . ' — referrer share of the advance deposit', $money($t['amount']), true];
         $rows[] = ['Client: ' . ($t['source']['full_name'] ?? '—') . '   ·   Package: ' . ($t['packages']['name'] ?? '—'), '', false];
         if (!$isUl && $t['deposit']) {
-            $rows[] = ['Setup fee ' . $money($t['deposit'] * 2) . '  >  50% deposit ' . $money($t['deposit']) . '  >  10% = ' . $money($t['deposit'] * 0.10), '', false];
+            $rows[] = ['Setup fee ' . $money($t['deposit'] * 2) . '  >  50% deposit ' . $money($t['deposit']) . '  >  ' . (commission_label($t['notes'])[1]) . ' = ' . $money($t['amount']), '', false];
         }
         if (!empty($t['notes'])) $rows[] = [(string) $t['notes'], '', false];
     } else {
@@ -534,7 +535,7 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
     $fy = MiniPdf::H - 96;
     $pdf->line($L, $fy, $R, $fy);
     $pdf->text($L, $fy + 18, 'Commission is paid on the 50% advance deposit of a one-time setup fee only — never on monthly fees,', 8, false, $muted);
-    $pdf->text($L, $fy + 30, 'the setup balance or plan payments. Uni-Level is 5% of a direct Co-growth Partner\'s Outright Commission.', 8, false, $muted);
+    $pdf->text($L, $fy + 30, 'the setup balance or plan payments. Of the 10%, 7.5% goes to the referrer and 2.5% to their upline (Uni-Level).', 8, false, $muted);
     $pdf->text($L, $fy + 42, 'Payouts close every Thursday 11:59 AM PT and reopen once the batch is sorted (2–3 business days).', 8, false, $muted);
     $pdf->text($L, $fy + 62, 'Generated ' . date('M j, Y g:i A') . '  ·  KAM Team  ·  Keep this receipt for your records.', 8, true, $ink);
 

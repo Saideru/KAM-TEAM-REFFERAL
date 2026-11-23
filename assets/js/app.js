@@ -593,11 +593,89 @@
     applyAll();
   }
 
+  /* ------------------------------------------------------------------
+   * Phone mode (≤900px): the sidebar becomes a slide-in drawer opened by
+   * the ☰ button in the top bar. Closes on the backdrop, Esc, the × button
+   * or after picking a page. Without JS the sidebar stays a scrolling tab
+   * strip (CSS only applies the drawer under html.nav-ready).
+   * ---------------------------------------------------------------- */
+  function mobileNav() {
+    var sb  = document.getElementById('app-sidebar');
+    var btn = $('.nav-toggle');
+    if (!btn) return;
+    if (!sb) { btn.parentNode.removeChild(btn); return; }
+    document.documentElement.classList.add('nav-ready');
+
+    var mq = window.matchMedia('(max-width: 900px)');
+    var backdrop = document.createElement('div');
+    backdrop.className = 'nav-backdrop';
+    backdrop.hidden = true;
+    document.body.appendChild(backdrop);
+
+    function isOpen() { return document.body.classList.contains('nav-open'); }
+    function set(open, returnFocus) {
+      document.body.classList.toggle('nav-open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      backdrop.hidden = !open;
+      if (mq.matches) sb.setAttribute('aria-hidden', open ? 'false' : 'true');
+      if (open) {
+        var first = $('.side-link.active', sb) || $('.side-link', sb);
+        if (first) first.focus();
+      } else if (returnFocus) {
+        btn.focus();
+      }
+    }
+    function sync() {
+      if (mq.matches) { sb.setAttribute('aria-hidden', isOpen() ? 'false' : 'true'); }
+      else { sb.removeAttribute('aria-hidden'); set(false); }
+    }
+
+    on(btn, 'click', function () { set(!isOpen(), false); });
+    on(backdrop, 'click', function () { set(false, true); });
+    on(sb, 'click', function (ev) {
+      if (ev.target.closest('.side-close')) { set(false, true); return; }
+      if (mq.matches && ev.target.closest('.side-link')) set(false, false);
+    });
+    on(document, 'keydown', function (ev) {
+      if (ev.key === 'Escape' && isOpen()) set(false, true);
+    });
+    if (mq.addEventListener) mq.addEventListener('change', sync); else if (mq.addListener) mq.addListener(sync);
+    sync();
+  }
+
+  /* ------------------------------------------------------------------
+   * Phone tables: each cell gets data-label = its column heading, so the
+   * CSS can show every row as a card ("STATUS  Active"). Re-run after a
+   * live refresh swaps tables in.
+   * ---------------------------------------------------------------- */
+  function tableLabels() {
+    function label(root) {
+      $$('table', root).forEach(function (table) {
+        if (table.classList.contains('no-stack') || table.closest('.report-doc, .org')) return;
+        var head = table.tHead && table.tHead.rows[0];
+        if (!head) return;
+        var names = Array.prototype.map.call(head.cells, function (th) { return th.textContent.trim(); });
+        table.classList.add('stack');
+        Array.prototype.forEach.call(table.tBodies, function (tb) {
+          Array.prototype.forEach.call(tb.rows, function (tr) {
+            if (tr.cells.length === 1) { tr.classList.add('stack-full'); return; }
+            Array.prototype.forEach.call(tr.cells, function (td, i) {
+              if (!td.hasAttribute('data-label')) td.setAttribute('data-label', names[i] || '');
+            });
+          });
+        });
+      });
+    }
+    label(document);
+    on(document, 'live:updated', function () { label(document); });
+  }
+
   /* ---------------------------------------------------------------- */
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
      countdowns, tableHints, copyButtons, adminPanels, tableFilters, netFilters,
-     statusFields, idleWatch, liveRefresh].forEach(function (mod) {
+     statusFields, idleWatch, mobileNav, tableLabels, liveRefresh].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });
   }

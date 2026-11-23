@@ -957,32 +957,33 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
 // Referral commission (Manual §3)
 // =====================================================================
 
-// Outright Commission rate, as a % of the client's 50% advance deposit.
+// Commission = 10% of the client's 50% advance deposit, split two ways:
+//   Outright  7.5% of the deposit → the referring Growth Partner
+//   Uni-Level 2.5% of the deposit → that partner's upline (or the Main Basket)
+// Both rates are admin settings (Payment tab), as % of the deposit.
 function commission_pct(string $token): float
 {
     $raw = get_settings($token, ['referral_commission_pct'])['referral_commission_pct'];
-    return $raw === '' ? 10.0 : max(0.0, min(100.0, (float) $raw));
+    return $raw === '' ? 7.5 : max(0.0, min(100.0, (float) $raw));
 }
 
-// Uni-Level (Level 1 sponsor override) rate, as a % of the co-growth
-// partner's Outright Commission (Manual §3.2). Direct Level 1 only.
 function unilevel_pct(string $token): float
 {
-    $raw = get_settings($token, ['unilevel_commission_pct'])['unilevel_commission_pct'] ?? '';
-    return $raw === '' ? 5.0 : max(0.0, min(100.0, (float) $raw));
+    $raw = get_settings($token, ['upline_commission_pct'])['upline_commission_pct'] ?? '';
+    return $raw === '' ? 2.5 : max(0.0, min(100.0, (float) $raw));
 }
 
-// The program's commission maths in one place (Manual §3, partner deck p.4):
+// The program's commission maths in one place:
 //   Step A  deposit   = actual invoiced setup fee × 50%
-//   Step B  outright  = deposit × 10%            (direct Growth Partner)
-//   Step C  unilevel  = outright × 5%            (that partner's direct sponsor)
-// Pass the setup fee, or the deposit with $isDeposit = true. Rates default to
-// 10% / 5%. Example: setup $1,000 → deposit $500 → outright $50 → unilevel $2.50.
-function commission_split(float $amount, bool $isDeposit = false, float $outrightPct = 10.0, float $unilevelPct = 5.0): array
+//   Step B  outright  = deposit × 7.5%           (the referring Growth Partner)
+//   Step C  unilevel  = deposit × 2.5%           (that partner's upline)
+// Pass the setup fee, or the deposit with $isDeposit = true.
+// Example: setup $1,000 → deposit $500 → outright $37.50 + upline $12.50 = $50.
+function commission_split(float $amount, bool $isDeposit = false, float $outrightPct = 7.5, float $unilevelPct = 2.5): array
 {
     $deposit  = $isDeposit ? $amount : $amount * 0.5;
     $outright = $deposit * $outrightPct / 100;
-    $unilevel = $outright * $unilevelPct / 100;
+    $unilevel = $deposit * $unilevelPct / 100;
     return [
         'setup'    => round($isDeposit ? $deposit * 2 : $amount, 2),
         'deposit'  => round($deposit, 2),
@@ -992,6 +993,16 @@ function commission_split(float $amount, bool $isDeposit = false, float $outrigh
 }
 
 // 5.0 -> "5", 7.5 -> "7.5", 10.0 -> "10"
+// "Outright 7.5%" / "Uni-Level 2.5%" — taken from the commission row's own
+// notes, so rows recorded under an older rate still show the right figure.
+function commission_label(?string $notes): array
+{
+    $notes = (string) $notes;
+    $isUl  = str_contains($notes, 'Uni-Level');
+    $pct   = preg_match('/^([\d.]+)%/', $notes, $m) ? $m[1] : null;
+    return [$isUl, ($isUl ? 'Uni-Level' : 'Outright') . ($pct !== null ? ' ' . $pct . '%' : '')];
+}
+
 function pct_label(float $pct): string
 {
     return rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.');
@@ -1052,8 +1063,8 @@ function pay_referral_commission(string $token, array $txn): void
         . '. You earned ' . pct_label($pct) . '% of it'
         . (!empty($referrer['lifecycle_expires_at']) ? ' and 3 more months on your Growth Partner term.' : '.'), $refId);
 
-    // Step C — Uni-Level: the referrer's direct sponsor earns 5% of this
-    // Outright Commission (Manual §3.2). Direct Level 1 only: it is never
+    // Step C — Uni-Level: the referrer's direct upline earns 2.5% of the
+    // deposit (the other part of the 10%). Direct Level 1 only: it is never
     // passed further up. The sponsor must be a Growth Partner whose term
     // has not ended; nothing is paid for joining or for plan payments
     // (this runs only for approved client deposits).
@@ -1082,14 +1093,14 @@ function pay_referral_commission(string $token, array $txn): void
         'amount'         => $split['unilevel'],
         'type'           => 'commission',
         'status'         => 'completed',
-        'notes'          => pct_label($ulPct) . '% Uni-Level (Level 1) on ' . ($referrer['full_name'] ?? 'your co-growth partner') . '\'s $' . number_format($commission, 2) . ' Outright Commission',
+        'notes'          => pct_label($ulPct) . '% Uni-Level (upline) on the advance deposit of ' . ($buyer['full_name'] ?? 'a client') . ', referred by ' . ($referrer['full_name'] ?? 'your co-growth partner'),
     ], $token, ['Prefer: return=minimal']);
     if ($ul['error']) return;
 
     audit_log($token, 'unilevel_commission', 'transaction', $txn['id'],
-        'Paid $' . number_format($split['unilevel'], 2) . ' (' . pct_label($ulPct) . '% of $' . number_format($commission, 2) . ' Outright) to sponsor of ' . ($referrer['username'] ?? $refId));
+        'Paid $' . number_format($split['unilevel'], 2) . ' (' . pct_label($ulPct) . '% of the $' . number_format($amount, 2) . ' deposit) to the upline of ' . ($referrer['username'] ?? $refId));
     notify($token, 'You earned $' . number_format($split['unilevel'], 2) . ' Uni-Level',
-        ($referrer['full_name'] ?? 'Your co-growth partner') . '\'s client paid a deposit. You earned ' . pct_label($ulPct) . '% of their $' . number_format($commission, 2) . ' Outright Commission.', $sponsorId);
+        ($referrer['full_name'] ?? 'Your co-growth partner') . '\'s client paid a $' . number_format($amount, 2) . ' deposit. As their upline you earned ' . pct_label($ulPct) . '% of it.', $sponsorId);
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -1396,9 +1407,9 @@ function affiliate_account_html(string $token, array $profile, bool $canRefer = 
             } else {
                 $out .= '<div class="table-scroll" tabindex="0" role="region" aria-label="Commission ledger"><table><thead><tr><th>Type</th><th>Client</th><th>Package</th><th>Amount</th><th>Date</th></tr></thead><tbody>';
                 foreach ($coms as $c) {
-                    // Uni-Level rows are the 5% Level 1 override on a co-growth partner's sale.
-                    $isUl = str_contains((string) ($c['notes'] ?? ''), 'Uni-Level');
-                    $out .= '<tr><td><span class="pill ' . ($isUl ? 'completed' : 'active') . '" title="' . e((string) ($c['notes'] ?? '')) . '">' . ($isUl ? 'Uni-Level 5%' : 'Outright 10%') . '</span></td><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
+                    // Uni-Level rows are the upline's share of a co-growth partner's client deposit.
+                    [$isUl, $typeLabel] = commission_label($c['notes'] ?? '');
+                    $out .= '<tr><td><span class="pill ' . ($isUl ? 'completed' : 'active') . '" title="' . e((string) ($c['notes'] ?? '')) . '">' . e($typeLabel) . '</span></td><td style="font-size:12px">' . e($c['source']['full_name'] ?? '—') . '</td><td style="font-size:12px">' . e($c['packages']['name'] ?? '—') . '</td>'
                           . '<td style="color:var(--green)">$' . number_format((float) $c['amount'], 2) . '</td><td style="font-size:12px">' . date('M j, Y', strtotime($c['created_at'])) . '</td></tr>';
                 }
                 $out .= '</tbody></table></div>';
@@ -1684,7 +1695,8 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
                 . ' href="' . e($it['href']) . '">' . $inner . '</a>';
         }
     }
-    return '<aside class="sidebar" aria-label="' . e($title) . '"><div class="side-title">' . e($title) . '</div><nav class="side-nav">' . $out . '</nav></aside>';
+    return '<aside class="sidebar" id="app-sidebar" aria-label="' . e($title) . '"><div class="side-title"><span>' . e($title) . '</span>'
+        . '<button type="button" class="side-close" aria-label="Close menu">&times;</button></div><nav class="side-nav">' . $out . '</nav></aside>';
 }
 
 // =====================================================================
@@ -2172,7 +2184,7 @@ function networth_html(string $token, array $profile, string $period = 'month', 
         $html .= '</tbody></table></div>';
     }
 
-    $html .= '<p class="hint nw-note">Networth = Outright commission (10% of your clients\' deposits) + Uni-Level commission (5% of your direct Co-growth Partners\' Outright). The forecast assumes the pace so far continues; it is an estimate, not guaranteed income.</p></section>';
+    $html .= '<p class="hint nw-note">Networth = Outright commission (' . e(pct_label(commission_pct($token))) . '% of your clients\' deposits) + Uni-Level commission (' . e(pct_label(unilevel_pct($token))) . '% of the deposits of clients your direct Co-growth Partners refer). The forecast assumes the pace so far continues; it is an estimate, not guaranteed income.</p></section>';
     return $html;
 }
 

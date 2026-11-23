@@ -161,7 +161,10 @@ function ui_topbar(array $o): string
         . '<button class="btn btn-ghost btn-sm" type="submit">Logout</button></form>';
 
     return '<header class="topbar">' . "\n"
-        . '  <div class="topbar-inner">' . kam_lockup()
+        . '  <div class="topbar-inner">'
+        // Phone mode: opens the sidebar as a drawer (assets/js/app.js mobileNav).
+        . '<button type="button" class="nav-toggle" aria-controls="app-sidebar" aria-expanded="false" aria-label="Open menu"><span></span><span></span><span></span></button>'
+        . kam_lockup()
         . '<div class="topbar-actions">' . $right . '</div></div>' . "\n"
         . "</header>\n";
 }
