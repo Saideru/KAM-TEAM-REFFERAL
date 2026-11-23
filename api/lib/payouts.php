@@ -417,19 +417,28 @@ function payout_page_html(string $token, array $profile, string $csrf): string
 
 function receipt_no(string $kind, string $id): string
 {
-    return ($kind === 'payout' ? 'KT-PO-' : 'KT-CM-') . strtoupper(substr(str_replace('-', '', $id), 0, 8));
+    $prefix = ['payout' => 'KT-PO-', 'commission' => 'KT-CM-', 'deposit' => 'KT-DP-', 'activation' => 'KT-AC-', 'basket' => 'KT-MB-'][$kind] ?? 'KT-TX-';
+    return $prefix . strtoupper(substr(str_replace('-', '', $id), 0, 8));
+}
+
+// Print / PDF links for one transaction's receipt.
+function receipt_links(string $base, string $id): string
+{
+    $u = $base . urlencode($id);
+    return '<span class="rcpt-links"><a class="btn btn-sm" href="' . e($u) . '&amp;print=1" target="_blank" rel="noopener">Print</a>'
+        . '<a class="btn btn-sm btn-ghost" href="' . e($u) . '">PDF</a></span>';
 }
 
 /**
- * Streams a PDF receipt for a commission or payout row and exits.
+ * Streams a PDF receipt for any transaction row and exits.
  * $ownerId: only that partner's rows (null = team access, any row).
  * "sample-commission" / "sample-payout" give an example receipt.
  */
 function receipt_send(string $token, string $id, ?string $ownerId): void
 {
-    $sample = in_array($id, ['sample-commission', 'sample-payout'], true);
+    $sample = in_array($id, ['sample-commission', 'sample-payout', 'sample-deposit', 'sample-activation', 'sample-basket'], true);
     if ($sample) {
-        $kind = $id === 'sample-payout' ? 'payout' : 'commission';
+        $kind = substr($id, 7);
         $t = [
             'id' => '5a3f9c21-0000-0000-0000-000000000000', 'type' => $kind, 'status' => 'completed',
             'amount' => $kind === 'payout' ? 486.25 : 37.50,
@@ -440,10 +449,13 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
             'source' => ['full_name' => 'Sample Client Co.'], 'packages' => ['name' => 'Google SEO'],
             'deposit' => 500.00,
         ];
+        if ($kind === 'deposit')    { $t['amount'] = 500.00; $t['payment_ref'] = 'GC-88412'; $t['notes'] = '50% advance deposit — Google SEO'; $t['owner'] = ['full_name' => 'Sample Client Co.', 'username' => 'sampleclient', 'referral_code' => 'KT-000002']; $t['balance_amount'] = 500.00; $t['balance_paid_at'] = date('c'); $t['balance_ref'] = 'BAL-2231'; }
+        if ($kind === 'activation') { $t['amount'] = 100.00; $t['payment_ref'] = 'GC-77120'; $t['notes'] = null; $t['packages'] = ['name' => 'Standard plan']; }
+        if ($kind === 'basket')     { $t['amount'] = 12.50; $t['notes'] = '2.5% Uni-Level to Main Basket'; $t['owner'] = ['full_name' => 'KAM Team', 'username' => 'admin', 'referral_code' => '']; }
     } else {
-        $q = 'select=id,type,status,amount,notes,payment_ref,created_at,reviewed_at,user_id,source_txn_id,packages(name),'
+        $q = 'select=id,type,status,amount,notes,payment_ref,created_at,reviewed_at,user_id,source_txn_id,balance_amount,balance_paid_at,balance_ref,packages(name),'
            . 'owner:profiles!transactions_user_id_fkey(full_name,username,referral_code),source:profiles!transactions_source_user_id_fkey(full_name)'
-           . '&type=in.(commission,payout)&id=eq.' . urlencode($id) . ($ownerId ? '&user_id=eq.' . urlencode($ownerId) : '');
+           . '&id=eq.' . urlencode($id) . ($ownerId ? '&user_id=eq.' . urlencode($ownerId) : '');
         $t = payout_get($token, $q)[0] ?? null;
         if (!$t) { http_response_code(404); header('Content-Type: text/plain'); echo 'Receipt not found.'; exit; }
         $kind = $t['type'];
@@ -454,6 +466,8 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
         }
     }
 
+    $isPay = in_array($kind, ['deposit', 'activation'], true);
+    $title = ['payout' => 'PAYOUT RECEIPT', 'commission' => 'COMMISSION RECEIPT', 'deposit' => 'DEPOSIT RECEIPT', 'activation' => 'PLAN PAYMENT RECEIPT', 'basket' => 'MAIN BASKET CREDIT'][$kind] ?? 'RECEIPT';
     $pdf   = new MiniPdf();
     $ink   = [26, 25, 23]; $muted = [98, 94, 87]; $orange = [242, 101, 31]; $rust = [184, 66, 15]; $paper = [247, 242, 233];
     $L = 48; $R = MiniPdf::W - 48;
@@ -466,7 +480,7 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
     $pdf->rect(0, 96, MiniPdf::W, 4, $orange);
     $pdf->text($L, 44, 'KAM TEAM', 24, true, $paper);
     $pdf->text($L, 66, 'KAM Growth Partnership Program', 10, false, $orange);
-    $pdf->text($R, 42, $kind === 'payout' ? 'PAYOUT RECEIPT' : 'COMMISSION RECEIPT', 14, true, $paper, 'right');
+    $pdf->text($R, 42, $title, 14, true, $paper, 'right');
     $pdf->text($R, 62, $no, 11, false, $orange, 'right');
 
     if ($sample) {
@@ -476,15 +490,19 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
 
     // Parties + meta.
     $y = $sample ? 170 : 140;
-    $pdf->text($L, $y, $kind === 'payout' ? 'PAID TO' : 'EARNED BY', 8, true, $muted);
+    $pdf->text($L, $y, ['payout' => 'PAID TO', 'commission' => 'EARNED BY', 'basket' => 'CREDITED TO'][$kind] ?? 'RECEIVED FROM', 8, true, $muted);
     $pdf->text($L, $y + 18, (string) ($t['owner']['full_name'] ?? '—'), 13, true);
     $pdf->text($L, $y + 34, '@' . ($t['owner']['username'] ?? '') . '   ·   ' . ($t['owner']['referral_code'] ?? ''), 10, false, $muted);
 
     $meta = [
         ['Receipt no.', $no],
-        [$kind === 'payout' ? 'Requested' : 'Date earned', $dt($t['created_at'])],
-        [$kind === 'payout' ? 'Paid on' : 'Recorded', $kind === 'payout' ? ($t['status'] === 'completed' ? $dt($t['reviewed_at']) : '—') : $dt($t['created_at'])],
-        ['Status', match ($t['status']) { 'completed' => $kind === 'payout' ? 'PAID' : 'CREDITED', 'pending' => 'BEING SORTED', 'failed' => 'REJECTED', default => strtoupper($t['status']) }],
+        [$kind === 'payout' ? 'Requested' : ($isPay ? 'Submitted' : 'Date earned'), $dt($t['created_at'])],
+        [$kind === 'payout' ? 'Paid on' : ($isPay ? 'Approved' : 'Recorded'), ($kind === 'payout' || $isPay) ? ($t['status'] === 'completed' ? $dt($t['reviewed_at'] ?? null) : '—') : $dt($t['created_at'])],
+        ['Status', match ($t['status']) {
+            'completed' => $kind === 'payout' ? 'PAID' : ($isPay ? 'APPROVED' : 'CREDITED'),
+            'pending'   => $kind === 'payout' ? 'BEING SORTED' : 'PENDING REVIEW',
+            'failed'    => 'REJECTED',
+            default     => strtoupper($t['status']) }],
     ];
     $my = $y;
     foreach ($meta as [$k, $v]) {
@@ -500,6 +518,7 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
     $pdf->text($R - 10, $y + 16, 'AMOUNT', 8, true, $muted, 'right');
     $y += 24;
     $rows = [];
+    $total = (float) $t['amount'];
     if ($kind === 'commission') {
         $isUl = str_contains((string) $t['notes'], 'Uni-Level');
         [, $typeLabel] = commission_label($t['notes']);
@@ -508,6 +527,27 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
         if (!$isUl && $t['deposit']) {
             $rows[] = ['Setup fee ' . $money($t['deposit'] * 2) . '  >  50% deposit ' . $money($t['deposit']) . '  >  ' . (commission_label($t['notes'])[1]) . ' = ' . $money($t['amount']), '', false];
         }
+        if (!empty($t['notes'])) $rows[] = [(string) $t['notes'], '', false];
+    } elseif ($kind === 'deposit') {
+        $setup = (float) $t['amount'] * 2;
+        $rows[] = ['50% advance deposit — ' . ($t['packages']['name'] ?? 'Service package'), $money($t['amount']), true];
+        $rows[] = ['Setup fee ' . $money($setup) . '   ·   Remaining balance ' . $money($t['balance_amount'] ?? $t['amount']), '', false];
+        if (!empty($t['payment_ref'])) $rows[] = ['Deposit reference: ' . $t['payment_ref'], '', false];
+        if (!empty($t['balance_paid_at'])) {
+            $rows[] = ['Remaining 50% balance — paid ' . $dt($t['balance_paid_at']), $money($t['balance_amount'] ?? $t['amount']), true];
+            if (!empty($t['balance_ref'])) $rows[] = ['Balance reference: ' . $t['balance_ref'] . '   ·   FULLY PAID', '', false];
+            $total = (float) $t['amount'] + (float) ($t['balance_amount'] ?? $t['amount']);
+        } else {
+            $rows[] = ['Remaining balance not yet paid', '', false];
+        }
+        if (!empty($t['notes']) && !str_starts_with((string) $t['notes'], '50% advance deposit')) $rows[] = [(string) $t['notes'], '', false];
+    } elseif ($kind === 'activation') {
+        $rows[] = ['Growth Partner plan — ' . ($t['packages']['name'] ?? 'Partner plan'), $money($t['amount']), true];
+        if (!empty($t['payment_ref'])) $rows[] = ['Payment reference: ' . $t['payment_ref'], '', false];
+        if (!empty($t['notes'])) $rows[] = [(string) $t['notes'], '', false];
+    } elseif ($kind === 'basket') {
+        $rows[] = ['Uni-Level share to the KAM Main Basket', $money($t['amount']), true];
+        $rows[] = ['Client: ' . ($t['source']['full_name'] ?? '—') . '   ·   Package: ' . ($t['packages']['name'] ?? '—'), '', false];
         if (!empty($t['notes'])) $rows[] = [(string) $t['notes'], '', false];
     } else {
         $d = payout_parse($t['notes']);
@@ -528,20 +568,26 @@ function receipt_send(string $token, string $id, ?string $ownerId): void
     // Total.
     $y += 14;
     $pdf->rect($R - 230, $y, 230, 44, $ink);
-    $pdf->text($R - 218, $y + 27, $kind === 'payout' ? 'TOTAL PAID' : 'TOTAL CREDITED', 9, true, $paper);
-    $pdf->text($R - 12, $y + 29, $money($t['amount']), 16, true, $orange, 'right');
+    $pdf->text($R - 218, $y + 27, $kind === 'payout' ? 'TOTAL PAID' : ($isPay ? 'AMOUNT PAID' : 'TOTAL CREDITED'), 9, true, $paper);
+    $pdf->text($R - 12, $y + 29, $money($total), 16, true, $orange, 'right');
 
     // Footer.
     $fy = MiniPdf::H - 96;
     $pdf->line($L, $fy, $R, $fy);
-    $pdf->text($L, $fy + 18, 'Commission is paid on the 50% advance deposit of a one-time setup fee only — never on monthly fees,', 8, false, $muted);
-    $pdf->text($L, $fy + 30, 'the setup balance or plan payments. Of the 10%, 7.5% goes to the referrer and 2.5% to their upline (Uni-Level).', 8, false, $muted);
-    $pdf->text($L, $fy + 42, 'Payouts close every Thursday 11:59 AM PT and reopen once the batch is sorted (2–3 business days).', 8, false, $muted);
+    if ($isPay) {
+        $pdf->text($L, $fy + 18, 'This receipt records a payment made to KAM Team. A payment is final once its status reads APPROVED.', 8, false, $muted);
+        $pdf->text($L, $fy + 30, 'Monthly fees are billed separately and are not part of this receipt.', 8, false, $muted);
+    } else {
+        $pdf->text($L, $fy + 18, 'Commission is paid on the 50% advance deposit of a one-time setup fee only — never on monthly fees,', 8, false, $muted);
+        $pdf->text($L, $fy + 30, 'the setup balance or plan payments. Of the 10%, 7.5% goes to the referrer and 2.5% to their upline (Uni-Level).', 8, false, $muted);
+        $pdf->text($L, $fy + 42, 'Payouts close every Thursday 11:59 AM PT and reopen once the batch is sorted (2–3 business days).', 8, false, $muted);
+    }
     $pdf->text($L, $fy + 62, 'Generated ' . date('M j, Y g:i A') . '  ·  KAM Team  ·  Keep this receipt for your records.', 8, true, $ink);
 
-    $bytes = $pdf->output(($kind === 'payout' ? 'Payout' : 'Commission') . ' receipt ' . $no);
+    $bytes = $pdf->output(ucwords(strtolower($title)) . ' ' . $no);
     header('Content-Type: application/pdf');
-    header('Content-Disposition: attachment; filename="' . $no . ($sample ? '-SAMPLE' : '') . '.pdf"');
+    // ?print=1 opens the PDF in the browser viewer (print from there); otherwise it downloads.
+    header('Content-Disposition: ' . (!empty($_GET['print']) ? 'inline' : 'attachment') . '; filename="' . $no . ($sample ? '-SAMPLE' : '') . '.pdf"');
     header('Content-Length: ' . strlen($bytes));
     header('Cache-Control: private, no-store');
     echo $bytes;

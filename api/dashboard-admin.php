@@ -1333,7 +1333,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     <div class="card"><h2>Transaction ledger</h2>
       <?php if (!$allTxns): ?><p class="empty">No transactions.</p>
       <?php else: ?><div class="table-scroll"><table>
-        <thead><tr><th>User</th><th>Type</th><th>Amount</th><th>Package</th><th>Status</th><th>Date</th><th>Update</th></tr></thead>
+        <thead><tr><th>User</th><th>Type</th><th>Amount</th><th>Package</th><th>Status</th><th>Date</th><th>Receipt</th><th>Update</th></tr></thead>
         <tbody><?php foreach ($allTxns as $t): ?>
           <tr>
             <td><strong><?= e($t['profiles']['full_name'] ?? '—') ?></strong></td>
@@ -1342,6 +1342,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <td style="font-size:12px"><?= e($t['packages']['name'] ?? '—') ?></td>
             <td><span class="pill <?= e($t['status']) ?>"><?= e($t['status']) ?></span></td>
             <td style="font-size:12px"><?= date('M j H:i', strtotime($t['created_at'])) ?></td>
+            <td><?= receipt_links('/dashboard-admin.php?receipt=', $t['id']) ?></td>
             <td><form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="update_txn"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><select name="txn_status"><?php foreach ($txnStatusOptions as $ts): ?><option <?= $t['status'] === $ts ? 'selected' : '' ?>><?= e($ts) ?></option><?php endforeach; ?></select><button class="btn btn-sm" type="submit">Save</button></form></td>
           </tr>
         <?php endforeach; ?></tbody>

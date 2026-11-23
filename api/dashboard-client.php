@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/lib/supabase.php';
+require_once __DIR__ . '/lib/payouts.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
 require_once __DIR__ . '/lib/ui.php';
@@ -16,6 +17,9 @@ $userId = $profile['id'];
 $errors = [];
 $notice = flash();
 $csrf   = csrf_token();
+
+// Print / PDF receipt for one of this client's own payments.
+if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], $userId);
 
 $pkgRes   = supabase_request('GET', '/rest/v1/packages?select=*&kind=eq.service&active=eq.true&order=price.asc', null, $token);
 $packages = is_array($pkgRes['body']) && !$pkgRes['error'] ? $pkgRes['body'] : [];
@@ -148,10 +152,25 @@ $contact   = !empty($profile['assigned_admin'])
         <div class="pending-box" style="margin-bottom:12px">
           <span class="label" style="color:var(--rust)"><span class="dot"></span>Deposit awaiting approval</span>
           <h3><?= e($t['packages']['name'] ?? 'Package') ?> — $<?= number_format((float) $t['amount'], 2) ?></h3>
-          <p class="hint">Ref <?= e($t['payment_ref'] ?? '—') ?> · submitted <?= date('M j, Y H:i', strtotime($t['created_at'])) ?></p>
+          <p class="hint">Ref <?= e($t['payment_ref'] ?? '—') ?> · submitted <?= date('M j, Y H:i', strtotime($t['created_at'])) ?> · Receipt <?= receipt_links('/dashboard-client.php?receipt=', $t['id']) ?></p>
           <form method="post" onsubmit="return confirm('Cancel this deposit request?')"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="action" value="cancel_deposit"><input type="hidden" name="txn_id" value="<?= e($t['id']) ?>"><button class="btn btn-ghost btn-sm" type="submit">Cancel request</button></form>
         </div>
       <?php endforeach; ?>
+
+      <?php if ($deps): ?>
+        <details class="rcpt-list" style="margin-bottom:14px"><summary class="btn btn-sm">Payment receipts (<?= count($deps) ?>)</summary>
+          <div class="table-scroll" style="margin-top:10px"><table>
+            <thead><tr><th>Package</th><th>Deposit</th><th>Status</th><th>Date</th><th>Receipt</th></tr></thead>
+            <tbody><?php foreach ($deps as $t): ?><tr>
+              <td><?= e($t['packages']['name'] ?? 'Package') ?></td>
+              <td>$<?= number_format((float) $t['amount'], 2) ?><?= !empty($t['balance_paid_at']) ? '<span class="ut-sub">fully paid</span>' : '' ?></td>
+              <td><span class="pill <?= e($t['status']) ?>"><?= e($t['status'] === 'completed' ? 'approved' : $t['status']) ?></span></td>
+              <td style="font-size:12px"><?= date('M j, Y', strtotime($t['created_at'])) ?></td>
+              <td><?= receipt_links('/dashboard-client.php?receipt=', $t['id']) ?></td>
+            </tr><?php endforeach; ?></tbody>
+          </table></div>
+        </details>
+      <?php endif; ?>
 
       <?php if (!$packages): ?><p class="empty">No packages available yet.</p><?php endif; ?>
       <div class="tier-cards">

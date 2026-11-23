@@ -93,7 +93,7 @@ function client_payments_html(string $token, string $csrf, array $nameById): str
             $h .= '<tr data-q="' . e($q) . '"><td><strong>' . e($c['full_name']) . '</strong><span class="ut-sub">@' . e($c['username']) . (!empty($c['company']) ? ' · ' . e($c['company']) : '') . '</span></td>'
                 . '<td>' . e($p['name'] ?? '—') . (!empty($p['monthly_price']) && (float) $p['monthly_price'] > 0 ? '<span class="ut-sub">then ' . $m($p['monthly_price']) . '/mo</span>' : '') . '</td>'
                 . '<td class="num">' . $m((float) $r['amount'] * 2) . '</td>'
-                . '<td class="num"><strong>' . $m($r['amount']) . '</strong><span class="ut-sub">ref ' . e($r['payment_ref'] ?? '—') . '</span></td>'
+                . '<td class="num"><strong>' . $m($r['amount']) . '</strong><span class="ut-sub">ref ' . e($r['payment_ref'] ?? '—') . '</span>' . receipt_links('/dashboard-admin.php?receipt=', $r['id']) . '</td>'
                 . '<td>' . e($r['reviewed_at'] ? date('M j, Y', strtotime($r['reviewed_at'])) : '—') . '<span class="ut-sub">by <strong>' . e($who($r['reviewed_by'] ?? null)) . '</strong></span></td>'
                 . '<td class="num"><strong class="net-total">' . $m($r['amount']) . '</strong></td>'
                 . '<td class="ut-actions">' . ($migrated
@@ -119,7 +119,7 @@ function client_payments_html(string $token, string $csrf, array $nameById): str
             . '<td class="num"><strong class="net-total">' . $m((float) $r['amount'] + (float) ($r['balance_amount'] ?? 0)) . '</strong></td>'
             . '<td>' . $m($r['amount']) . ' · ' . e($r['reviewed_at'] ? date('M j, Y', strtotime($r['reviewed_at'])) : '—') . '<span class="ut-sub">approved by <strong>' . e($who($r['reviewed_by'] ?? null)) . '</strong></span></td>'
             . '<td>' . $m($r['balance_amount'] ?? 0) . ' · ' . e(date('M j, Y', strtotime($r['balance_paid_at']))) . '<span class="ut-sub">marked by <strong>' . e($who($r['balance_paid_by'] ?? null)) . '</strong> · ref ' . e($r['balance_ref'] ?? '—') . '</span></td>'
-            . '<td><span class="pill stage-approved completed" style="background:var(--orange);border-color:var(--orange);color:#1A1917">Fully paid</span></td></tr>';
+            . '<td><span class="pill stage-approved completed" style="background:var(--orange);border-color:var(--orange);color:#1A1917">Fully paid</span>' . receipt_links('/dashboard-admin.php?receipt=', $r['id']) . '</td></tr>';
     }
     return $h . '</tbody></table></div><p class="empty" id="pay-full-none" hidden>No clients match.</p></div>';
 }
