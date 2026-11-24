@@ -32,6 +32,7 @@ if (is_client_only($profile) && !plan_request_pending($token, $userId)) {
 
 // PDF receipt for one of this partner's commissions or payouts (or a sample).
 if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], $userId);
+rollup_terminated($token);
 
 // Growth Partner plans only — service packages are bought on the Client side.
 $pkgRes   = supabase_request('GET', '/rest/v1/packages?select=*&kind=eq.affiliate&active=eq.true&order=price.asc', null, $token);
@@ -128,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     if ($act === 'request_payout') {
         $err = payout_request($token, $profile);
         if (!$err) {
-            flash('success', 'Payout requested. It is sorted after the Thursday 11:59 AM PT cutoff — you will get a notification and a receipt once it is paid.');
+            flash('success', 'Payout requested. It is sorted after the Wednesday 11:59 PM ET cutoff (Thursday in the Philippines) — you will get a notification and a receipt once it is paid.');
             header('Location: /dashboard-affiliate.php?view=payout'); exit;
         }
         $errors[] = $err;

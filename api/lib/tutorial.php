@@ -12,7 +12,7 @@ function tutorial_chapters(string $role, string $out, string $up): array
     ]];
 
     $commission = 'When a client you referred pays the <strong>50% advance deposit</strong> on a service package, you earn <strong>' . $out . '% of that deposit</strong> (Outright). '
-        . 'Your direct upline earns <strong>' . $up . '%</strong> (Uni-Level). If the upline is an admin account or there is none, that share goes to the KAM Main Basket. Monthly fees and the remaining balance are never commissionable.';
+        . 'Your direct upline earns <strong>' . $up . '% of your Outright</strong> (Uni-Level), taken out of your Outright, e.g. a $500 deposit gives a $50 Outright: your upline gets $2.50 and you keep $47.50. If the upline is an admin account or there is none, that share goes to the KAM Main Basket. Monthly fees and the remaining balance are never commissionable.';
 
     switch ($role) {
         case 'admin':
@@ -27,12 +27,13 @@ function tutorial_chapters(string $role, string $out, string $up): array
                     '<strong>Referral pipeline</strong>: each referred client moves <em>Pending → Converted (package) → Approved</em>, or <em>Rejected</em> with a reason. Approving releases the commission.',
                     '<strong>Referral network</strong>: All / Growth Partners / Clients views with search and filters; "View tree" shows a partner\'s whole downline.',
                     '<strong>Roulette</strong>: the rotation of admins who receive new sign-ups without a code.',
+                    '<strong>Compression</strong>: when a deal closes and the referrer\'s upline is suspended, rejected, removed or expired, the Uni-Level share skips to the next active Growth Partner above. The referrer is then <strong>permanently re-linked</strong> to that partner. This is logged as "upline re-linked".',
                 ]],
                 ['Money', [
                     '<strong>Client payments</strong>: clients who paid 50%, and a separate Fully paid view showing who marked each one.',
-                    '<strong>Payouts</strong>: the payout queue. Mark requests paid or reject them. Payouts close automatically every <strong>Thursday 11:59 AM Pacific</strong>; only an admin can reopen them, with their password.',
+                    '<strong>Payouts</strong>: the payout queue. Mark requests paid or reject them. Payouts close automatically every <strong>Wednesday 11:59 PM US Eastern</strong> (Thursday in the Philippines); only an admin can reopen them, with their password. When marking a payout paid, enter the fees and any tax withheld so the receipt shows the net amount (Terms §5.6).',
                     '<strong>Transactions</strong>: every activation, deposit, commission, Main Basket credit and payout.',
-                    '<strong>Payment QR</strong>: the QR code and rates members pay with, including the ' . $out . '% / ' . $up . '% commission split.',
+                    '<strong>Payment QR</strong>: the QR code and rates members pay with, including the commission rates: ' . $out . '% Outright of the deposit, and ' . $up . '% of that Outright to the upline.',
                 ]],
                 ['Catalog', [
                     '<strong>Packages</strong>: Growth Partner plans and client service packages. Price edits are scheduled ahead and announced.',
@@ -61,7 +62,7 @@ function tutorial_chapters(string $role, string $out, string $up): array
                 ]],
                 ['Payouts', [
                     'Work the payout queue: mark Growth Partner payout requests paid (with a reference) or reject them with a reason. The bar fills as requests are handled.',
-                    'Payouts close every Thursday 11:59 AM Pacific; an admin reopens them.',
+                    'Payouts close every Wednesday 11:59 PM US Eastern (Thursday in the Philippines); an admin reopens them. Enter fees and tax withheld when marking a payout paid.',
                 ]],
             ];
 
@@ -98,14 +99,16 @@ function tutorial_chapters(string $role, string $out, string $up): array
                 ['4. Track your referrals', [
                     '<strong>Clients referred</strong> shows each client\'s stage: <em>Pending → Converted (package) → Approved</em>, or <em>Rejected</em> with the admin\'s reason.',
                     '<strong>Your downline</strong> shows the partners below you.',
+                    'If your upline is suspended or their term ends, the next active partner above them becomes your <strong>permanent upline</strong> the next time one of your clients pays. You\'ll get a notification when that happens.',
                 ]],
                 ['5. How you earn', [
                     $commission,
                     'The <strong>Forecast</strong> on Overview estimates your monthly and yearly total (Outright + Uni-Level).',
                 ]],
                 ['6. Get paid', [
-                    'On <strong>Payout</strong>, press <strong>Payout now</strong> and choose Crypto or PayPal once your balance reaches the minimum.',
-                    'Payouts close every <strong>Thursday 11:59 AM Pacific</strong> while the team processes them, and reopen within 2–3 business days.',
+                    'On <strong>Payout</strong>, press <strong>Payout now</strong> and choose a bank transfer (Philippines, US, Canada or Australia), PayPal or USDT once your balance reaches US$100. Fees and any tax withheld are deducted; the receipt shows gross and net.',
+                    'Basic partners: Uni-Level can be withdrawn only after you refer a new Qualified Client since your last payout (Outright is always withdrawable). Standard partners can also withdraw during their 30-day grace period.',
+                    'Payouts close every <strong>Wednesday 11:59 PM US Eastern</strong> (Thursday in the Philippines) while the team processes them, and reopen within 2–3 business days.',
                     'The Commission ledger and Payout receipts open as tables; every row downloads as a PDF receipt.',
                 ]],
             ];

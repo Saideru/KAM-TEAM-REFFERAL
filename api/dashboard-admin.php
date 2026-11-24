@@ -23,6 +23,7 @@ $txnStatusOptions = ['pending', 'completed', 'failed', 'reversed'];
 
 // PDF receipt for any commission or payout.
 if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], null);
+rollup_terminated($token);
 
 // Referral pipeline: Converted / Approve / Reject / Reopen.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($pipeRes = pipeline_admin_action($token, $profile))) {
@@ -506,15 +507,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     if ($act === 'save_commission') {
         $pct = $_POST['commission_pct'] ?? '';
         $ul  = $_POST['upline_pct'] ?? '';
-        if (!is_numeric($pct) || !is_numeric($ul) || (float) $pct < 0 || (float) $ul < 0 || (float) $pct + (float) $ul > 100) {
-            $errors[] = 'Rates must be numbers from 0, and together no more than 100.';
+        if (!is_numeric($pct) || !is_numeric($ul) || (float) $pct < 0 || (float) $ul < 0 || (float) $pct > 100 || (float) $ul > 100) {
+            $errors[] = 'Rates must be numbers from 0 to 100.';
         } else {
             $new   = pct_label(round((float) $pct, 2));
             $newUl = pct_label(round((float) $ul, 2));
             set_setting($token, 'referral_commission_pct', $new);
             set_setting($token, 'upline_commission_pct', $newUl);
-            audit_log($token, 'commission_rate', 'app_settings', null, 'Commission set to ' . $new . '% referrer + ' . $newUl . '% upline of the advance deposit');
-            flash('success', 'Commission set: ' . $new . '% to the referrer + ' . $newUl . '% to their upline, of each advance deposit.');
+            audit_log($token, 'commission_rate', 'app_settings', null, 'Commission set to ' . $new . '% of the advance deposit (Outright) + ' . $newUl . '% of that Outright to the upline (Uni-Level)');
+            flash('success', 'Commission set: referrer ' . $new . '% of each advance deposit; upline ' . $newUl . '% of that Outright commission.');
             header('Location: /dashboard-admin.php#payment'); exit;
         }
     }
@@ -1000,7 +1001,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   <!-- PAYMENT SETTINGS -->
   <div id="panel-payment" class="admin-panel" data-live="panel-payment">
     <div class="card" style="margin-bottom:12px"><h2>Commission split</h2>
-      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a referred client pays the 50% advance deposit on a service package, the commission is split: the <strong>referring Growth Partner</strong> earns the Outright rate and <strong>their upline</strong> earns the Uni-Level rate — both as a % of the deposit (default 7.5% + 2.5% = 10%). When the upline is an admin's own Growth Partner account, or there is none, the upline share goes to the Main Basket. Plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
+      <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">When a referred client pays the 50% advance deposit on a service package, the commission is split: the <strong>referring Growth Partner</strong> earns the Outright rate as a % of the deposit (default 10%), and <strong>their direct upline</strong> earns the Uni-Level rate as a % of that Outright commission (default 5%, Terms §3.2). When the upline is an admin's own Growth Partner account, or there is none, the upline share goes to the Main Basket. Plan payments, the remaining setup balance and monthly fees are never commissionable.</p>
       <form method="post">
         <input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="save_commission">
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
@@ -1009,11 +1010,11 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
             <input id="com-pct" name="commission_pct" type="number" min="0" max="100" step="0.1" value="<?= e(pct_label($comPct)) ?>" style="width:120px">
           </div>
           <div class="field" style="margin:0">
-            <label for="ul-pct">Upline — Uni-Level (%)</label>
+            <label for="ul-pct">Upline — Uni-Level (% of Outright)</label>
             <input id="ul-pct" name="upline_pct" type="number" min="0" max="100" step="0.1" value="<?= e(pct_label($ulPct)) ?>" style="width:120px">
           </div>
           <button class="btn btn-sm btn-solid" type="submit">Save rates →</button>
-          <span style="font-size:12px;color:var(--text-dim)">A $1,000 deposit (on a $2,000 setup fee) pays the referrer $<?= number_format(1000 * $comPct / 100, 2) ?> + the upline $<?= number_format(1000 * $ulPct / 100, 2) ?> = $<?= number_format(1000 * ($comPct + $ulPct) / 100, 2) ?>.</span>
+          <span style="font-size:12px;color:var(--text-dim)">A $1,000 deposit (on a $2,000 setup fee) pays the referrer $<?= number_format(1000 * $comPct / 100, 2) ?>; their upline gets $<?= number_format(round(1000 * $comPct / 100, 2) * $ulPct / 100, 2) ?>.</span>
         </div>
       </form>
     </div>

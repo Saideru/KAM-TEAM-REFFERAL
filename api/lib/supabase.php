@@ -958,42 +958,44 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
 // =====================================================================
 
 // Commission = 10% of the client's 50% advance deposit, split two ways:
-//   Outright  7.5% of the deposit → the referring Growth Partner
-//   Uni-Level 2.5% of the deposit → that partner's upline (or the Main Basket)
+//   Outright  10% of the deposit → the referring Growth Partner
+//   Uni-Level 5% of that Outright → that partner's upline (or the Main Basket)
 // Both rates are admin settings (Payment tab), as % of the deposit.
 function commission_pct(string $token): float
 {
     $raw = get_settings($token, ['referral_commission_pct'])['referral_commission_pct'];
-    return $raw === '' ? 7.5 : max(0.0, min(100.0, (float) $raw));
+    return $raw === '' ? 10.0 : max(0.0, min(100.0, (float) $raw));
 }
 
 function unilevel_pct(string $token): float
 {
     $raw = get_settings($token, ['upline_commission_pct'])['upline_commission_pct'] ?? '';
-    return $raw === '' ? 2.5 : max(0.0, min(100.0, (float) $raw));
+    return $raw === '' ? 5.0 : max(0.0, min(100.0, (float) $raw));
 }
 
 // The program's commission maths in one place:
 //   Step A  deposit   = actual invoiced setup fee × 50%
-//   Step B  outright  = deposit × 7.5%           (the referring Growth Partner)
-//   Step C  unilevel  = deposit × 2.5%           (that partner's upline)
+//   Step B  outright  = deposit × 10%            (the referring Growth Partner)
+//   Step C  unilevel  = outright × 5%            (that partner's direct upline)
 // Pass the setup fee, or the deposit with $isDeposit = true.
-// Example: setup $1,000 → deposit $500 → outright $37.50 + upline $12.50 = $50.
-function commission_split(float $amount, bool $isDeposit = false, float $outrightPct = 7.5, float $unilevelPct = 2.5): array
+// Example (Terms §3.5): setup $1,000 → deposit $500 → outright $50 → upline $2.50.
+function commission_split(float $amount, bool $isDeposit = false, float $outrightPct = 10.0, float $unilevelPct = 5.0): array
 {
     $deposit  = $isDeposit ? $amount : $amount * 0.5;
     $outright = $deposit * $outrightPct / 100;
-    $unilevel = $deposit * $unilevelPct / 100;
+    $unilevel = round($outright, 2) * $unilevelPct / 100;
     return [
         'setup'    => round($isDeposit ? $deposit * 2 : $amount, 2),
         'deposit'  => round($deposit, 2),
         'outright' => round($outright, 2),
         'unilevel' => round($unilevel, 2),
+        // Referrer keeps the Outright minus the sponsor's 5% (e.g. $100 - $5 = $95).
+        'net'      => round(round($outright, 2) - round($unilevel, 2), 2),
     ];
 }
 
 // 5.0 -> "5", 7.5 -> "7.5", 10.0 -> "10"
-// "Outright 7.5%" / "Uni-Level 2.5%" — taken from the commission row's own
+// "Outright 10%" / "Uni-Level 5%" — taken from the commission row's own
 // notes, so rows recorded under an older rate still show the right figure.
 function commission_label(?string $notes): array
 {
@@ -1042,29 +1044,31 @@ function pay_referral_commission(string $token, array $txn): void
     $ulPct      = unilevel_pct($token);
     $split      = commission_split($amount, true, $pct, $ulPct);
     $commission = $split['outright'];
-    if ($commission <= 0) return;
+    $netPaid    = $split['net'];
+    if ($netPaid <= 0) return;
 
     $res = supabase_request('POST', '/rest/v1/transactions', [
         'user_id'        => $refId,
         'package_id'     => $txn['package_id'] ?? null,
         'source_user_id' => $txn['user_id'],
         'source_txn_id'  => $txn['id'],
-        'amount'         => $commission,
+        'amount'         => $netPaid,
         'type'           => 'commission',
         'status'         => 'completed',
-        'notes'          => pct_label($pct) . '% Outright Commission on the advance deposit of ' . ($buyer['full_name'] ?? 'a referred client'),
+        'notes'          => pct_label($pct) . '% Outright Commission on the advance deposit of ' . ($buyer['full_name'] ?? 'a referred client')
+                            . ' ($' . number_format($commission, 2) . ' less $' . number_format($split['unilevel'], 2) . ' sponsor ' . pct_label($ulPct) . '%)',
     ], $token, ['Prefer: return=minimal']);
     if ($res['error']) return;
 
     audit_log($token, 'referral_commission', 'transaction', $txn['id'],
-        'Paid $' . number_format($commission, 2) . ' (' . pct_label($pct) . '% of deposit) to referrer of ' . ($buyer['username'] ?? $txn['user_id']));
-    notify($token, 'You earned $' . number_format($commission, 2),
+        'Paid $' . number_format($netPaid, 2) . ' (' . pct_label($pct) . '% of deposit $' . number_format($commission, 2) . ' less sponsor ' . pct_label($ulPct) . '%) to referrer of ' . ($buyer['username'] ?? $txn['user_id']));
+    notify($token, 'You earned $' . number_format($netPaid, 2),
         ($buyer['full_name'] ?? 'A client you referred') . ' paid the advance deposit on ' . ($txn['packages']['name'] ?? 'a package')
-        . '. You earned ' . pct_label($pct) . '% of it'
+        . '. You earned ' . pct_label($pct) . '% of it ($' . number_format($commission, 2) . ') less the ' . pct_label($ulPct) . '% sponsor share'
         . (!empty($referrer['lifecycle_expires_at']) ? ' and 3 more months on your Growth Partner term.' : '.'), $refId);
 
-    // Step C — Uni-Level: the referrer's direct upline earns 2.5% of the
-    // deposit (the other part of the 10%). Direct Level 1 only: it is never
+    // Step C — Uni-Level: the referrer's direct upline earns 5% of the
+    // referrer's Outright commission (Terms §3.2). Direct Level 1 only: it is never
     // passed further up. The sponsor must be a Growth Partner whose term
     // has not ended; nothing is paid for joining or for plan payments
     // (this runs only for approved client deposits).
@@ -1078,12 +1082,15 @@ function pay_referral_commission(string $token, array $txn): void
     if ($split['unilevel'] <= 0) return;
     $refName = $referrer['full_name'] ?? null;
     if (is_house_partner($referrer)) { basket_add($token, $txn, $split['unilevel'], 'referrer is an admin Growth Partner account', $refName); return; }
-    $sponsorId = $referrer['referred_by'] ?? null;
-    $sponsor   = $sponsorId ? (supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($sponsorId), null, $token)['body'][0] ?? null) : null;
-    if (!$sponsor || !empty($sponsor['deleted_at'])) { basket_add($token, $txn, $split['unilevel'], 'no upline', $refName); return; }
-    if (is_house_partner($sponsor)) { basket_add($token, $txn, $split['unilevel'], 'upline is an admin Growth Partner account', $refName); return; }
-    if (($sponsor['role'] ?? '') !== 'growth_partner' && empty($sponsor['affiliate_tier'])) { basket_add($token, $txn, $split['unilevel'], 'upline is not a Growth Partner', $refName); return; }
-    if (affiliate_state($sponsor) === 'terminated') { basket_add($token, $txn, $split['unilevel'], "upline's Growth Partner term has ended", $refName); return; }
+    // Compression: a suspended, rejected, removed or expired upline is passed
+    // over and the share goes to the next active Growth Partner above it.
+    // The referrer is then re-linked to that partner for good.
+    [$sponsor, $skipped] = active_upline($token, $referrer);
+    if ($skipped && $sponsor) relink_upline($token, $referrer, $sponsor, $skipped);
+    $skipNote = $skipped ? ' (passed over ' . implode(', ', array_map(fn($p) => $p['full_name'] ?? $p['username'] ?? 'inactive upline', $skipped)) . ')' : '';
+    if (!$sponsor) { basket_add($token, $txn, $split['unilevel'], 'no active upline' . $skipNote, $refName); return; }
+    if (is_house_partner($sponsor)) { basket_add($token, $txn, $split['unilevel'], 'upline is an admin Growth Partner account' . $skipNote, $refName); return; }
+    $sponsorId = $sponsor['id'];
 
     $ul = supabase_request('POST', '/rest/v1/transactions', [
         'user_id'        => $sponsorId,
@@ -1093,14 +1100,95 @@ function pay_referral_commission(string $token, array $txn): void
         'amount'         => $split['unilevel'],
         'type'           => 'commission',
         'status'         => 'completed',
-        'notes'          => pct_label($ulPct) . '% Uni-Level (upline) on the advance deposit of ' . ($buyer['full_name'] ?? 'a client') . ', referred by ' . ($referrer['full_name'] ?? 'your co-growth partner'),
+        'notes'          => pct_label($ulPct) . '% Uni-Level (upline) of the ' . pct_label($pct) . '% Outright commission on the advance deposit of ' . ($buyer['full_name'] ?? 'a client') . ', referred by ' . ($referrer['full_name'] ?? 'your co-growth partner'),
     ], $token, ['Prefer: return=minimal']);
     if ($ul['error']) return;
 
     audit_log($token, 'unilevel_commission', 'transaction', $txn['id'],
-        'Paid $' . number_format($split['unilevel'], 2) . ' (' . pct_label($ulPct) . '% of the $' . number_format($amount, 2) . ' deposit) to the upline of ' . ($referrer['username'] ?? $refId));
+        'Paid $' . number_format($split['unilevel'], 2) . ' (' . pct_label($ulPct) . '% of the $' . number_format($commission, 2) . ' Outright) to the upline of ' . ($referrer['username'] ?? $refId));
     notify($token, 'You earned $' . number_format($split['unilevel'], 2) . ' Uni-Level',
-        ($referrer['full_name'] ?? 'Your co-growth partner') . '\'s client paid a $' . number_format($amount, 2) . ' deposit. As their upline you earned ' . pct_label($ulPct) . '% of it.', $sponsorId);
+        ($referrer['full_name'] ?? 'Your co-growth partner') . '\'s client paid a $' . number_format($amount, 2) . ' deposit. As their upline you earned ' . pct_label($ulPct) . '% of their $' . number_format($commission, 2) . ' Outright commission.', $sponsorId);
+}
+
+// An upline that can no longer receive Uni-Level: removed, suspended or
+// rejected, not a Growth Partner, or past its term's grace period.
+function upline_inactive(array $p): bool
+{
+    if (!empty($p['deleted_at'])) return true;
+    if (in_array($p['status'] ?? '', ['suspended', 'rejected'], true)) return true;
+    if (($p['role'] ?? '') !== 'growth_partner' && empty($p['affiliate_tier'])) return true;
+    return affiliate_state($p) === 'terminated';
+}
+
+// Walks up from $partner's upline to the first active Growth Partner.
+// Returns [that partner or null, [inactive uplines passed over, nearest first]].
+function active_upline(string $token, array $partner): array
+{
+    $skipped = [];
+    $seen    = [$partner['id'] => true];
+    $id      = $partner['referred_by'] ?? null;
+    while ($id && !isset($seen[$id]) && count($seen) < 60) {
+        $seen[$id] = true;
+        $p = supabase_request('GET', '/rest/v1/profiles?select=*&id=eq.' . urlencode($id), null, $token)['body'][0] ?? null;
+        if (!$p) break;
+        if (!upline_inactive($p)) return [$p, $skipped];
+        $skipped[] = $p;
+        $id = $p['referred_by'] ?? null;
+    }
+    return [null, $skipped];
+}
+
+// Permanent re-link: $partner's upline becomes $newUpline. Logged and both
+// partners are told; the old upline stays in the audit trail.
+function relink_upline(string $token, array $partner, array $newUpline, array $skipped, ?string $why = null): void
+{
+    $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($partner['id']) . '&referred_by=eq.' . urlencode((string) $partner['referred_by']),
+        ['referred_by' => $newUpline['id']], $token, ['Prefer: return=minimal']);
+    if ($res['error']) return;
+    $old = $skipped[0];
+    audit_log($token, 'referral_upline_relinked', 'profile', $partner['id'],
+        ($partner['full_name'] ?? 'Partner') . ' re-linked from ' . ($old['full_name'] ?? 'inactive upline') . ' (' . ($why ?? ($old['status'] ?? 'inactive')) . ') to '
+        . ($newUpline['full_name'] ?? 'upline') . ' ' . ($newUpline['referral_code'] ?? '') . ' — permanent upline connection');
+    notify($token, 'Your upline changed', 'Your upline ' . ($old['full_name'] ?? '') . ' is no longer active, so you are now permanently linked to '
+        . ($newUpline['full_name'] ?? 'a new upline') . '. Uni-Level on your clients goes to them from now on.', $partner['id']);
+    notify($token, 'New Growth Partner in your downline', ($partner['full_name'] ?? 'A Growth Partner') . ' moved up to you because their upline '
+        . ($old['full_name'] ?? '') . ' is no longer active. You now earn Uni-Level on their clients.', $newUpline['id']);
+}
+
+// Roll-Up (Terms §2.7, §6.1, §6.2): when a Growth Partner is terminated
+// (term + grace period over, or removed to the recycle bin), all of their
+// direct Co-growth Partners move up to that partner's own upline — the next
+// active Growth Partner above. Runs on page loads, at most every 10 minutes.
+function rollup_terminated(string $token, bool $force = false): int
+{
+    $last = get_settings($token, ['rollup_checked_at'])['rollup_checked_at'] ?? '';
+    if (!$force && $last !== '' && strtotime($last) > time() - 600) return 0;
+    set_setting($token, 'rollup_checked_at', gmdate('c'));
+
+    $rows = supabase_request('GET', '/rest/v1/profiles?select=id,full_name,username,referral_code,role,status,affiliate_tier,lifecycle_expires_at,deleted_at,referred_by'
+        . '&or=(role.eq.growth_partner,affiliate_tier.not.is.null)', null, $token)['body'] ?? [];
+    if (!is_array($rows) || !$rows) return 0;
+    $byId = [];
+    foreach ($rows as $r) $byId[$r['id']] = $r;
+    $gone = fn(array $p) => !empty($p['deleted_at']) || affiliate_state($p) === 'terminated';
+
+    $moved = 0;
+    foreach ($rows as $child) {
+        if ($gone($child) || empty($child['referred_by']) || !isset($byId[$child['referred_by']])) continue;
+        $parent = $byId[$child['referred_by']];
+        if (!$gone($parent)) continue;
+        // Walk up past every inactive account to the first active partner.
+        $skipped = []; $seen = [$child['id'] => true]; $up = $parent;
+        while ($up && !isset($seen[$up['id']]) && upline_inactive($up)) {
+            $seen[$up['id']] = true;
+            $skipped[] = $up;
+            $up = isset($up['referred_by'], $byId[$up['referred_by']]) ? $byId[$up['referred_by']] : null;
+        }
+        if (!$up || isset($seen[$up['id']])) continue;
+        relink_upline($token, $child, $up, $skipped, !empty($parent['deleted_at']) ? 'account removed' : 'term ended');
+        $moved++;
+    }
+    return $moved;
 }
 
 function reject_activation(string $token, string $txnId, string $adminId, string $reason = ''): ?string
@@ -2218,7 +2306,7 @@ function networth_html(string $token, array $profile, string $period = 'month', 
         $html .= '</tbody></table></div>';
     }
 
-    $html .= '<p class="hint nw-note">Networth = Outright commission (' . e(pct_label(commission_pct($token))) . '% of your clients\' deposits) + Uni-Level commission (' . e(pct_label(unilevel_pct($token))) . '% of the deposits of clients your direct Co-growth Partners refer). The forecast assumes the pace so far continues; it is an estimate, not guaranteed income.</p></section>';
+    $html .= '<p class="hint nw-note">Networth = Outright commission (' . e(pct_label(commission_pct($token))) . '% of your clients\' deposits) + Uni-Level commission (' . e(pct_label(unilevel_pct($token))) . '% of the Outright commission your direct Co-growth Partners earn). The forecast assumes the pace so far continues; it is an estimate, not guaranteed income.</p></section>';
     return $html;
 }
 

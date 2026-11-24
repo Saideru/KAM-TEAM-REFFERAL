@@ -31,20 +31,26 @@ function client_payment_action(string $token, array $profile): ?array
 
     $t = supabase_request('GET', '/rest/v1/transactions?select=id,user_id,amount,balance_paid_at,packages!transactions_package_id_fkey(name),profiles!transactions_user_id_fkey(full_name)&type=eq.deposit&status=eq.completed&id=eq.' . urlencode($id), null, $token)['body'][0] ?? null;
     if (!$t) return ['That deposit was not found or is not approved yet.', ''];
+    $proof = image_data_uri($_FILES['balance_proof'] ?? null, 3 * 1024 * 1024, $imgErr);
+    if ($imgErr) return [$imgErr, ''];
     if (!empty($t['balance_paid_at'])) return ['This client is already marked fully paid.', ''];
 
     // Balance = the other half of the setup fee (the deposit was 50%).
     $bal = round((float) $t['amount'], 2);
-    $res = supabase_request('PATCH', '/rest/v1/transactions?balance_paid_at=is.null&id=eq.' . urlencode($id), [
-        'balance_paid_at' => gmdate('c'), 'balance_paid_by' => $profile['id'], 'balance_ref' => $ref, 'balance_amount' => $bal,
-    ], $token, ['Prefer: return=representation']);
-    if ($res['error']) return [str_contains((string) $res['error'], 'balance_') ? 'Run migration 20261205 first (it adds the Fully paid columns).' : $res['error'], ''];
+    $patch = ['balance_paid_at' => gmdate('c'), 'balance_paid_by' => $profile['id'], 'balance_ref' => $ref, 'balance_amount' => $bal];
+    if ($proof) $patch['balance_proof'] = $proof;
+    $res = supabase_request('PATCH', '/rest/v1/transactions?balance_paid_at=is.null&id=eq.' . urlencode($id) . '&select=id', $patch, $token, ['Prefer: return=representation']);
+    if ($res['error']) {
+        $err = (string) $res['error'];
+        return [str_contains($err, 'balance_proof') ? 'Run migration 20261207 first (it adds the proof-of-payment picture).'
+              : (str_contains($err, 'balance_') ? 'Run migration 20261205 first (it adds the Fully paid columns).' : $err), ''];
+    }
     if (empty($res['body'])) return ['This client is already marked fully paid.', ''];
 
     $client = $t['profiles']['full_name'] ?? 'client';
     $pkg    = $t['packages']['name'] ?? 'package';
     audit_log($token, 'balance_paid', 'transaction', $id,
-        'Marked ' . $client . ' fully paid — ' . $pkg . ' (remaining 50%: $' . number_format($bal, 2) . ', ref ' . $ref . ') by ' . ($profile['full_name'] ?? 'admin'));
+        'Marked ' . $client . ' fully paid — ' . $pkg . ' (remaining 50%: $' . number_format($bal, 2) . ', ref ' . $ref . ($proof ? ', proof picture attached' : '') . ') by ' . ($profile['full_name'] ?? 'admin'));
     notify($token, 'Fully paid — ' . $pkg, 'Your remaining 50% balance of $' . number_format($bal, 2) . ' is confirmed. Thank you — your ' . $pkg . ' setup is fully paid.', $t['user_id']);
     return [null, $client . ' marked fully paid — ' . $pkg . '.'];
 }
@@ -97,9 +103,10 @@ function client_payments_html(string $token, string $csrf, array $nameById): str
                 . '<td>' . e($r['reviewed_at'] ? date('M j, Y', strtotime($r['reviewed_at'])) : '—') . '<span class="ut-sub">by <strong>' . e($who($r['reviewed_by'] ?? null)) . '</strong></span></td>'
                 . '<td class="num"><strong class="net-total">' . $m($r['amount']) . '</strong></td>'
                 . '<td class="ut-actions">' . ($migrated
-                    ? '<form method="post" class="pipe-act" onsubmit="return confirm(\'Mark ' . e(addslashes($c['full_name'])) . ' fully paid? This records your name.\')">' . $hid
+                    ? '<form method="post" enctype="multipart/form-data" class="pipe-act pay-proof-form" onsubmit="return confirm(\'Mark ' . e(addslashes($c['full_name'])) . ' fully paid? This records your name.\')">' . $hid
                       . '<input type="hidden" name="pay_action" value="fully_paid"><input type="hidden" name="txn_id" value="' . e($r['id']) . '">'
-                      . '<input name="balance_ref" required minlength="3" maxlength="120" placeholder="Payment ref" aria-label="Reference for the remaining 50%"><button class="btn btn-sm btn-solid" type="submit">Fully paid</button></form>'
+                      . '<input name="balance_ref" required minlength="3" maxlength="120" placeholder="Payment ref" aria-label="Reference for the remaining 50%">'
+                      . '<label class="proof-pick"><input type="file" name="balance_proof" accept="image/png,image/jpeg,image/webp" onchange="var s=this.nextElementSibling;s.textContent=this.files[0]?this.files[0].name:s.dataset.empty"><span data-empty="Upload proof (photo)">Upload proof (photo)</span></label><button class="btn btn-sm btn-solid" type="submit">Fully paid</button></form>'
                     : '<span class="hint">Needs migration</span>') . '</td></tr>';
         }
         return $h . '</tbody></table></div><p class="empty" id="pay-half-none" hidden>No clients match.</p></div>';
@@ -111,15 +118,28 @@ function client_payments_html(string $token, string $csrf, array $nameById): str
     $h .= '<div class="net-tools" data-net-for="pay-full"><input type="search" class="net-q" placeholder="Search client, company, package or approver…" aria-label="Search fully paid clients" autocomplete="off"><span class="net-count" aria-live="polite"></span></div>'
         . '<div class="table-scroll" tabindex="0" role="region" aria-label="Fully paid clients"><table class="users-table" id="pay-full"><thead><tr>'
         . '<th scope="col">Client</th><th scope="col">Package</th><th scope="col" class="num">Total paid</th><th scope="col">50% deposit</th><th scope="col">Remaining 50%</th><th scope="col">Status</th></tr></thead><tbody>';
+    $proofs = [];
+    if ($full) {
+        $pr = supabase_request('GET', '/rest/v1/transactions?select=id,balance_proof&balance_proof=not.is.null&id=in.(' . implode(',', array_map(fn($r) => $r['id'], $full)) . ')', null, $token);
+        foreach (is_array($pr['body']) && !$pr['error'] ? $pr['body'] : [] as $x) $proofs[$x['id']] = $x['balance_proof'];
+    }
     foreach ($full as $r) {
         $c = $r['profiles']; $p = $r['packages'] ?? [];
+        $proofHtml = '';
+        if (!empty($proofs[$r['id']]) && str_starts_with($proofs[$r['id']], 'data:image/')) {
+            $dlg = 'proof-' . $r['id'];
+            $proofHtml = '<button type="button" class="btn btn-sm" onclick="this.nextElementSibling.showModal()">View proof</button>'
+                . '<dialog class="tree-dialog po-dialog" id="' . e($dlg) . '" aria-label="Proof of payment"><div class="tree-dlg-head"><div><span class="label">Proof of payment · ref ' . e($r['balance_ref'] ?? '—') . '</span><h3>' . e($c['full_name']) . '</h3></div>'
+                . '<form method="dialog"><button class="btn btn-sm btn-ghost" type="submit">Close</button></form></div>'
+                . '<div class="tree-dlg-body"><img class="proof-img" src="' . e($proofs[$r['id']]) . '" alt="Proof of payment uploaded for ' . e($c['full_name']) . '"></div></dialog>';
+        }
         $q = implode(' ', [$c['full_name'], '@' . $c['username'], $c['company'] ?? '', $p['name'] ?? '', $who($r['reviewed_by'] ?? null), $who($r['balance_paid_by'] ?? null)]);
         $h .= '<tr data-q="' . e($q) . '"><td><strong>' . e($c['full_name']) . '</strong><span class="ut-sub">@' . e($c['username']) . (!empty($c['company']) ? ' · ' . e($c['company']) : '') . '</span></td>'
             . '<td>' . e($p['name'] ?? '—') . '</td>'
             . '<td class="num"><strong class="net-total">' . $m((float) $r['amount'] + (float) ($r['balance_amount'] ?? 0)) . '</strong></td>'
             . '<td>' . $m($r['amount']) . ' · ' . e($r['reviewed_at'] ? date('M j, Y', strtotime($r['reviewed_at'])) : '—') . '<span class="ut-sub">approved by <strong>' . e($who($r['reviewed_by'] ?? null)) . '</strong></span></td>'
             . '<td>' . $m($r['balance_amount'] ?? 0) . ' · ' . e(date('M j, Y', strtotime($r['balance_paid_at']))) . '<span class="ut-sub">marked by <strong>' . e($who($r['balance_paid_by'] ?? null)) . '</strong> · ref ' . e($r['balance_ref'] ?? '—') . '</span></td>'
-            . '<td><span class="pill stage-approved completed" style="background:var(--orange);border-color:var(--orange);color:#1A1917">Fully paid</span>' . receipt_links('/dashboard-admin.php?receipt=', $r['id']) . '</td></tr>';
+            . '<td><span class="pill stage-approved completed" style="background:var(--orange);border-color:var(--orange);color:#1A1917">Fully paid</span>' . $proofHtml . receipt_links('/dashboard-admin.php?receipt=', $r['id']) . '</td></tr>';
     }
     return $h . '</tbody></table></div><p class="empty" id="pay-full-none" hidden>No clients match.</p></div>';
 }

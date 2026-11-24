@@ -14,6 +14,7 @@ $notice = flash();
 
 // Payouts: staff and admins sort the batch here (admins also switch payouts on/off).
 if (isset($_GET['receipt'])) receipt_send($token, (string) $_GET['receipt'], null);
+rollup_terminated($token);
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_team_action($token, $profile))) {
     if ($poRes[0] === null) { flash('success', $poRes[1]); header('Location: /work.php?view=payouts'); exit; }
     $errors[] = $poRes[0];
