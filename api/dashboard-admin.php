@@ -130,7 +130,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), ['deleted_at' => date('c'), 'status' => 'suspended'], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'soft_delete', 'profile', $uid, 'User soft-deleted');
-                flash('success', 'User trashed.'); header('Location: /dashboard-admin.php#users'); exit;
+                // §6.1 / §6.3 commission handling on trash:
+                // If GP has referred clients (has Outright commissions) → keep balance, they can withdraw.
+                // If GP has NO referred clients (only Uni-Level) → forfeit all commissions.
+                $u = urlencode($uid);
+                $allComs = supabase_request('GET', '/rest/v1/transactions?select=id,amount,notes&type=eq.commission&status=eq.completed&user_id=eq.' . $u, null, $token)['body'] ?? [];
+                $hasOutright = false;
+                $totalUni = 0.0;
+                foreach ((is_array($allComs) ? $allComs : []) as $c) {
+                    if (str_contains((string) ($c['notes'] ?? ''), 'Uni-Level')) {
+                        $totalUni += (float) $c['amount'];
+                    } else {
+                        $hasOutright = true;
+                    }
+                }
+                if (!$hasOutright && $totalUni > 0) {
+                    // No clients referred — forfeit all Uni-Level commissions.
+                    foreach ((is_array($allComs) ? $allComs : []) as $c) {
+                        supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($c['id']),
+                            ['status' => 'failed', 'notes' => trim(($c['notes'] ?? '') . ' | Forfeited — account trashed with no referred clients')],
+                            $token, ['Prefer: return=minimal']);
+                    }
+                    audit_log($token, 'commission_forfeited', 'profile', $uid,
+                        'All Uni-Level commissions ($' . number_format($totalUni, 2) . ') forfeited — no referred clients at time of trash');
+                }
+                $msg = 'User trashed.';
+                if (!$hasOutright && $totalUni > 0) $msg .= ' $' . number_format($totalUni, 2) . ' Uni-Level forfeited (no referred clients).';
+                elseif ($hasOutright) $msg .= ' Approved balance kept — this partner has referred clients.';
+                flash('success', $msg); header('Location: /dashboard-admin.php#users'); exit;
             }
             $errors[] = $res['error'];
         }
@@ -1443,14 +1470,15 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     <?php if ($binUsers): ?>
     <div class="card" style="margin-bottom:12px"><h2>Deleted accounts <span class="hint">(<?= count($binUsers) ?>)</span></h2>
       <div class="table-scroll"><table>
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Deleted</th><th>Code</th><th></th></tr></thead>
-        <tbody><?php foreach ($binUsers as $p): ?>
+        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Deleted</th><th>Code</th><th>Balance</th><th></th></tr></thead>
+        <tbody><?php foreach ($binUsers as $p): $binBal = payout_balance($token, $p['id']); ?>
           <tr>
             <td><strong><?= e($p['full_name']) ?></strong><?php if (!empty($p['email'])): ?><br><span class="hint"><?= e($p['email']) ?></span><?php endif; ?></td>
             <td style="font-size:12px"><?= e($p['username']) ?></td>
             <td><span class="role-badge <?= e($p['role']) ?>"><?= e(role_name($p['role'])) ?></span></td>
             <td style="font-size:12px"><?= date('M j, Y H:i', strtotime($p['deleted_at'])) ?></td>
             <td style="font-size:11px"><?= e($p['referral_code']) ?></td>
+            <td style="font-size:12px"><?= $binBal['available'] > 0 ? '<strong style="color:var(--ok)">$' . number_format($binBal['available'], 2) . '</strong><br><span class="hint">owes final payout</span>' : ($binBal['earned'] > 0 ? '<span class="hint">$0 (forfeited)</span>' : '—') ?></td>
             <td><div class="bin-actions">
               <form method="post" class="inline-form"><input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="admin_action" value="restore_user"><input type="hidden" name="user_id" value="<?= e($p['id']) ?>"><button class="btn btn-sm" type="submit">Restore</button></form>
               <details class="bin-purge"><summary class="btn btn-sm btn-danger">Delete forever</summary>
@@ -1465,7 +1493,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
           </tr>
         <?php endforeach; ?></tbody>
       </table></div>
-      <p class="hint" style="margin:8px 0 0">A restored account goes back to Pending, so approve it again in Approvals. Its referral code, referrals and commissions are kept.</p>
+      <p class="hint" style="margin:8px 0 0">A restored account goes back to Pending, so approve it again in Approvals. Its referral code, referrals and commissions are kept.<br>§6.1–6.3: If a trashed GP had referred clients, their approved balance is kept for a final payout. If they had no referred clients, all Uni-Level commissions are forfeited.</p>
     </div>
     <?php endif; ?>
 
