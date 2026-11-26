@@ -92,24 +92,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                         count($children) . ' downline account(s) moved to parent: @' . implode(', @', $names));
                 }
 
-                // §6.1 / §6.3 commission handling on trash:
-                // If GP has referred clients (has Outright commissions) → keep balance, they can withdraw.
-                // If GP has NO referred clients → forfeit all commissions and transfer balance to Main Admin GP (KT-000001).
+                // Forfeit all commissions and transfer available balance to Main Admin GP (KT-000001).
                 $u = urlencode($uid);
                 $allComs = supabase_request('GET', '/rest/v1/transactions?select=id,amount,notes&type=eq.commission&status=eq.completed&user_id=eq.' . $u, null, $token)['body'] ?? [];
-                $hasOutright = false;
-                $totalEarned = 0.0;
-                foreach ((is_array($allComs) ? $allComs : []) as $c) {
-                    $totalEarned += (float) $c['amount'];
-                    if (!str_contains((string) ($c['notes'] ?? ''), 'Uni-Level')) $hasOutright = true;
-                }
+                $totalEarned = array_sum(array_map(fn($r) => (float) $r['amount'], is_array($allComs) ? $allComs : []));
                 $pays = supabase_request('GET', '/rest/v1/transactions?select=amount&type=eq.payout&status=in.(pending,completed)&user_id=eq.' . $u, null, $token)['body'] ?? [];
                 $paid = array_sum(array_map(fn($r) => (float) $r['amount'], is_array($pays) ? $pays : []));
                 $transferAmt = round(max(0, $totalEarned - $paid), 2);
                 $msg = 'User moved to trash.';
-                if ($hasOutright) {
-                    $msg .= ' Approved balance kept — this partner has referred clients.';
-                } elseif ($transferAmt > 0) {
+                if ($transferAmt > 0) {
                     $mainAdmin = supabase_request('GET', '/rest/v1/profiles?select=id&referral_code=eq.KT-000001&limit=1', null, $token)['body'][0] ?? null;
                     if ($mainAdmin) {
                         foreach ((is_array($allComs) ? $allComs : []) as $c) {
@@ -126,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                         ], $token, ['Prefer: return=minimal']);
                         audit_log($token, 'commission_transferred', 'profile', $uid,
                             '$' . number_format($transferAmt, 2) . ' transferred to Main Admin GP (KT-000001) on trash');
-                        $msg .= ' $' . number_format($transferAmt, 2) . ' forfeited and transferred to Main Admin GP.';
+                        $msg .= ' $' . number_format($transferAmt, 2) . ' transferred to Main Admin GP.';
                     }
                 }
                 flash('success', $msg); header('Location: dashboard-admin.php#users'); exit;
@@ -163,6 +154,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                     audit_log($token, 'restore_reparent', 'profile', $uid,
                         count($saved) . ' downline account(s) returned under restored GP');
                 }
+                // Undo commission forfeiture: restore failed commissions and remove the transfer to Main Admin.
+                $u = urlencode($uid);
+                $forfeitedComs = supabase_request('GET', '/rest/v1/transactions?select=id,notes&type=eq.commission&status=eq.failed&user_id=eq.' . $u, null, $token)['body'] ?? [];
+                foreach ((is_array($forfeitedComs) ? $forfeitedComs : []) as $c) {
+                    if (str_contains((string) ($c['notes'] ?? ''), 'Forfeited')) {
+                        supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($c['id']),
+                            ['status' => 'completed', 'notes' => preg_replace('/ \| Forfeited.*$/', '', $c['notes'] ?? '')],
+                            $token, ['Prefer: return=minimal']);
+                    }
+                }
+                $mainAdmin = supabase_request('GET', '/rest/v1/profiles?select=id&referral_code=eq.KT-000001&limit=1', null, $token)['body'][0] ?? null;
+                if ($mainAdmin) {
+                    $transfers = supabase_request('GET', '/rest/v1/transactions?select=id,amount&type=eq.commission&status=eq.completed&user_id=eq.' . urlencode($mainAdmin['id']) . '&notes=like.*Transferred from trashed account*&order=created_at.desc&limit=1', null, $token)['body'] ?? [];
+                    foreach ((is_array($transfers) ? $transfers : []) as $t) {
+                        supabase_request('DELETE', '/rest/v1/transactions?id=eq.' . urlencode($t['id']), null, $token, ['Prefer: return=minimal']);
+                        audit_log($token, 'commission_transfer_reversed', 'profile', $uid,
+                            '$' . number_format((float) $t['amount'], 2) . ' transfer reversed from Main Admin GP on restore');
+                    }
+                }
+
                 audit_log($token, 'restore', 'profile', $uid, 'User restored from trash');
                 flash('success', 'User restored.'); header('Location: dashboard-admin.php#users'); exit;
             }
