@@ -64,6 +64,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), ['deleted_at' => date('c'), 'status' => 'suspended'], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
                 audit_log($token, 'soft_delete', 'profile', $uid, 'User soft-deleted');
+
+                // Reparent: move the trashed user's direct downline to their parent.
+                $trashedProfile = supabase_request('GET', '/rest/v1/profiles?select=id,referred_by&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null;
+                $parentId = $trashedProfile['referred_by'] ?? null;
+                $children = supabase_request('GET', '/rest/v1/profiles?select=id,username&referred_by=eq.' . urlencode($uid) . '&deleted_at=is.null', null, $token)['body'] ?? [];
+                if ($children && is_array($children)) {
+                    foreach ($children as $child) {
+                        $cid = urlencode($child['id']);
+                        supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . $cid,
+                            ['referred_by' => $parentId], $token, ['Prefer: return=minimal']);
+                        supabase_request('DELETE', '/rest/v1/referrals?referrer_id=eq.' . urlencode($uid) . '&referred_id=eq.' . $cid, null, $token, ['Prefer: return=minimal']);
+                        if ($parentId) {
+                            supabase_request('POST', '/rest/v1/referrals', [
+                                'referrer_id' => $parentId,
+                                'referred_id' => $child['id'],
+                                'status'      => 'active',
+                            ], $token, ['Prefer: return=minimal', 'Prefer: resolution=ignore-duplicates']);
+                        }
+                    }
+                    $names = array_column($children, 'username');
+                    audit_log($token, 'reparent_downline', 'profile', $uid,
+                        count($children) . ' downline account(s) moved to parent: @' . implode(', @', $names));
+                }
+
                 flash('success', 'User moved to trash.'); header('Location: dashboard-admin.php#users'); exit;
             }
             $errors[] = $res['error'];
