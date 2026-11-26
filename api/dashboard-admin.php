@@ -136,11 +136,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 $parentId = $trashedProfile['referred_by'] ?? null;
                 $children = supabase_request('GET', '/rest/v1/profiles?select=id,username&referred_by=eq.' . urlencode($uid) . '&deleted_at=is.null', null, $token)['body'] ?? [];
                 if ($children && is_array($children)) {
+                    $reparentLog = [];
                     foreach ($children as $child) {
                         $cid = urlencode($child['id']);
+                        $reparentLog[] = ['id' => $child['id'], 'old_referred_by' => $uid];
                         supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . $cid,
                             ['referred_by' => $parentId], $token, ['Prefer: return=minimal']);
-                        // Update referrals table: remove old link, add new one
                         supabase_request('DELETE', '/rest/v1/referrals?referrer_id=eq.' . urlencode($uid) . '&referred_id=eq.' . $cid, null, $token, ['Prefer: return=minimal']);
                         if ($parentId) {
                             supabase_request('POST', '/rest/v1/referrals', [
@@ -150,6 +151,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                             ], $token, ['Prefer: return=minimal', 'Prefer: resolution=ignore-duplicates']);
                         }
                     }
+                    supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid),
+                        ['reparented_children' => json_encode($reparentLog)], $token, ['Prefer: return=minimal']);
                     $names = array_column($children, 'username');
                     audit_log($token, 'reparent_downline', 'profile', $uid,
                         count($children) . ' downline account(s) moved to parent: @' . implode(', @', $names));
@@ -157,31 +160,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 
                 // §6.1 / §6.3 commission handling on trash:
                 // If GP has referred clients (has Outright commissions) → keep balance, they can withdraw.
-                // If GP has NO referred clients (only Uni-Level) → forfeit all commissions.
+                // If GP has NO referred clients → forfeit all commissions and transfer balance to Main Admin GP (KT-000001).
+                $bal = payout_balance($token, $uid);
+                $transferAmt = $bal['available'];
                 $u = urlencode($uid);
                 $allComs = supabase_request('GET', '/rest/v1/transactions?select=id,amount,notes&type=eq.commission&status=eq.completed&user_id=eq.' . $u, null, $token)['body'] ?? [];
                 $hasOutright = false;
-                $totalUni = 0.0;
                 foreach ((is_array($allComs) ? $allComs : []) as $c) {
-                    if (str_contains((string) ($c['notes'] ?? ''), 'Uni-Level')) {
-                        $totalUni += (float) $c['amount'];
-                    } else {
+                    if (!str_contains((string) ($c['notes'] ?? ''), 'Uni-Level')) {
                         $hasOutright = true;
+                        break;
                     }
-                }
-                if (!$hasOutright && $totalUni > 0) {
-                    // No clients referred — forfeit all Uni-Level commissions.
-                    foreach ((is_array($allComs) ? $allComs : []) as $c) {
-                        supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($c['id']),
-                            ['status' => 'failed', 'notes' => trim(($c['notes'] ?? '') . ' | Forfeited — account trashed with no referred clients')],
-                            $token, ['Prefer: return=minimal']);
-                    }
-                    audit_log($token, 'commission_forfeited', 'profile', $uid,
-                        'All Uni-Level commissions ($' . number_format($totalUni, 2) . ') forfeited — no referred clients at time of trash');
                 }
                 $msg = 'User trashed.';
-                if (!$hasOutright && $totalUni > 0) $msg .= ' $' . number_format($totalUni, 2) . ' Uni-Level forfeited (no referred clients).';
-                elseif ($hasOutright) $msg .= ' Approved balance kept — this partner has referred clients.';
+                if ($hasOutright) {
+                    $msg .= ' Approved balance kept — this partner has referred clients.';
+                } elseif ($transferAmt > 0) {
+                    $mainAdmin = supabase_request('GET', '/rest/v1/profiles?select=id&referral_code=eq.KT-000001&limit=1', null, $token)['body'][0] ?? null;
+                    if ($mainAdmin) {
+                        foreach ((is_array($allComs) ? $allComs : []) as $c) {
+                            supabase_request('PATCH', '/rest/v1/transactions?id=eq.' . urlencode($c['id']),
+                                ['status' => 'failed', 'notes' => trim(($c['notes'] ?? '') . ' | Forfeited — balance transferred to Main Admin on trash')],
+                                $token, ['Prefer: return=minimal']);
+                        }
+                        supabase_request('POST', '/rest/v1/transactions', [
+                            'user_id' => $mainAdmin['id'],
+                            'type'    => 'commission',
+                            'amount'  => $transferAmt,
+                            'status'  => 'completed',
+                            'notes'   => 'Transferred from trashed account (balance forfeited)',
+                        ], $token, ['Prefer: return=minimal']);
+                        audit_log($token, 'commission_transferred', 'profile', $uid,
+                            '$' . number_format($transferAmt, 2) . ' transferred to Main Admin GP (KT-000001) on trash');
+                        $msg .= ' $' . number_format($transferAmt, 2) . ' forfeited and transferred to Main Admin GP.';
+                    }
+                }
                 flash('success', $msg); header('Location: /dashboard-admin.php#users'); exit;
             }
             $errors[] = $res['error'];
@@ -292,8 +305,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     if ($act === 'restore_user') {
         $uid = $_POST['user_id'] ?? '';
         if ($uid) {
-            $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), ['deleted_at' => null, 'status' => 'pending'], $token, ['Prefer: return=minimal']);
+            // Read reparented_children before clearing it.
+            $beforeRestore = supabase_request('GET', '/rest/v1/profiles?select=reparented_children&id=eq.' . urlencode($uid), null, $token)['body'][0] ?? null;
+            $saved = $beforeRestore['reparented_children'] ?? null;
+            if (is_string($saved)) $saved = json_decode($saved, true);
+
+            $res = supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . urlencode($uid), ['deleted_at' => null, 'status' => 'pending', 'reparented_children' => null], $token, ['Prefer: return=minimal']);
             if (!$res['error']) {
+                if ($saved && is_array($saved)) {
+                    foreach ($saved as $entry) {
+                        $childId = $entry['id'];
+                        $cid = urlencode($childId);
+                        $currentParent = supabase_request('GET', '/rest/v1/profiles?select=referred_by&id=eq.' . $cid, null, $token)['body'][0]['referred_by'] ?? null;
+                        supabase_request('PATCH', '/rest/v1/profiles?id=eq.' . $cid,
+                            ['referred_by' => $uid], $token, ['Prefer: return=minimal']);
+                        if ($currentParent) {
+                            supabase_request('DELETE', '/rest/v1/referrals?referrer_id=eq.' . urlencode($currentParent) . '&referred_id=eq.' . $cid, null, $token, ['Prefer: return=minimal']);
+                        }
+                        supabase_request('POST', '/rest/v1/referrals', [
+                            'referrer_id' => $uid,
+                            'referred_id' => $childId,
+                            'status'      => 'active',
+                        ], $token, ['Prefer: return=minimal', 'Prefer: resolution=ignore-duplicates']);
+                    }
+                    audit_log($token, 'restore_reparent', 'profile', $uid,
+                        count($saved) . ' downline account(s) returned under restored GP');
+                }
                 audit_log($token, 'restore', 'profile', $uid, 'Account restored from the recycle bin');
                 flash('success', 'Account restored. It is back in Approvals until you accept it.'); $back('trash'); exit;
             }

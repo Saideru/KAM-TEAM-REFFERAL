@@ -644,7 +644,7 @@ a.notif-item:hover { background: var(--surface-2); }
 }
 .side-link svg { flex: none; width: 22px; height: 22px; }
 .side-link .side-label { flex: 1; }
-.side-link:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+.side-link:hover { background: rgba(255, 255, 255, .08); color: #FFD700; }
 .side-link.active, .side-link.admin-tab.active { border-left-color: var(--orange); background: rgba(242, 101, 34, .18); color: #ff9a5c; }
 .side-link .tab-count { margin-left: auto; font-size: 13px; }
 .sidebar::-webkit-scrollbar { width: 8px; }
