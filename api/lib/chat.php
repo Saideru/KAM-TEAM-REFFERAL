@@ -393,6 +393,69 @@ function chat_peer_param(): ?string
     return is_string($peer) && $peer !== '' ? $peer : null;
 }
 
+// The staff assigned to one client / Growth Partner, as profile rows.
+function chat_member_staff(string $token, array $dir, string $memberId): array
+{
+    $res = supabase_request('GET', '/rest/v1/staff_assignments?select=staff_id&member_id=eq.' . urlencode($memberId), null, $token);
+    $ids = (!$res['error'] && is_array($res['body'])) ? array_column($res['body'], 'staff_id') : [];
+    $out = [];
+    foreach ($ids as $id) if (isset($dir[$id])) $out[$id] = $dir[$id];
+    return $out;
+}
+
+// Where to send an admin back to after an assign / unassign. The forms in
+// the Messages panel carry the conversation they were posted from; only a
+// path inside this app is accepted, never an absolute URL.
+function chat_assign_return(string $fallback = '/dashboard-admin.php#assign'): string
+{
+    $to = $_POST['assign_return'] ?? null;
+    return is_string($to) && preg_match('#^/[A-Za-z0-9_\-./?=&%]*(\#[A-Za-z0-9_\-]*)?$#', $to) && !str_starts_with($to, '//')
+        ? $to : $fallback;
+}
+
+/**
+ * Admin only, shown above the conversation with a client / Growth Partner:
+ * who serves this account, and a picker to put another staff member on it.
+ * Assigning here is the same action as the Assignments panel — it is what
+ * opens the staff <-> member conversation.
+ */
+function chat_assign_bar_html(string $token, array $me, string $csrf, array $peer, string $returnTo): string
+{
+    if (chat_role($me) !== 'admin' || !in_array(chat_role($peer), CHAT_MEMBERS, true)) return '';
+
+    $dir      = chat_directory($token);
+    $assigned = chat_member_staff($token, $dir, $peer['id']);
+    $free     = array_filter($dir, fn($r) => chat_role($r) === 'staff' && !isset($assigned[$r['id']]));
+
+    $hid = fn(array $f) => '<input type="hidden" name="csrf" value="' . e($csrf) . '">'
+        . '<input type="hidden" name="assign_return" value="' . e($returnTo) . '">'
+        . '<input type="hidden" name="member_id" value="' . e($peer['id']) . '">'
+        . implode('', array_map(fn($k, $v) => '<input type="hidden" name="' . e($k) . '" value="' . e((string) $v) . '">', array_keys($f), $f));
+
+    $tags = '';
+    foreach ($assigned as $s) {
+        $tags .= '<form method="post" class="assign-tag">' . $hid(['assign_action' => 'unassign', 'staff_id' => $s['id']])
+            . '<span>' . e($s['full_name']) . '<small>Staff</small></span>'
+            . '<button class="assign-x" type="submit" title="Remove assignment" aria-label="Remove ' . e($s['full_name']) . ' from this account">&times;</button></form>';
+    }
+    if (!$tags) $tags = '<span class="hint">No staff on this account yet — it can only reach the admins.</span>';
+
+    $add = '';
+    if ($free) {
+        $opts = '';
+        foreach ($free as $s) $opts .= '<option value="' . e($s['id']) . '">' . e($s['full_name']) . '</option>';
+        $add = '<form method="post" class="assign-add">' . $hid(['assign_action' => 'assign'])
+            . '<select name="staff_id" required aria-label="Assign a staff member to ' . e($peer['full_name']) . '">'
+            . '<option value="">Assign staff…</option>' . $opts . '</select>'
+            . '<button class="btn btn-sm" type="submit">Assign →</button></form>';
+    } elseif (!$assigned) {
+        $add = '<span class="hint">No staff accounts yet — register one in Users.</span>';
+    }
+
+    return '<div class="chat-assign"><span class="label">Staff on this account</span>'
+        . '<div class="assign-tags">' . $tags . $add . '</div></div>';
+}
+
 function chat_initial(?string $name): string
 {
     return e(mb_strtoupper(mb_substr(trim((string) $name) !== '' ? (string) $name : '?', 0, 1)));
@@ -421,9 +484,17 @@ function chat_panel_html(string $token, array $me, string $csrf, string $base, ?
         $p   = $c['profile'];
         $on  = $peer && $p['id'] === $peer['profile']['id'];
         $sub = $c['last']
-            ? (($c['last']['sender_id'] === $me['id'] ? 'You: ' : '') . mb_substr((string) $c['last']['body'], 0, 60))
+            ? (($c['last']['sender_id'] === $me['id'] ? 'You: ' : '')
+                . mb_substr(preg_replace('/\s+/u', ' ', (string) $c['last']['body']), 0, 60))
             : role_name(chat_role($p)) . (!empty($p['company']) ? ' · ' . $p['company'] : '');
-        $rows .= '<a class="chat-contact' . ($on ? ' is-on' : '') . '" href="' . e($link($p['id'])) . '">'
+        // data-search is what the box above the list filters on, so a
+        // search matches a name, a username, a company or an account type.
+        $hay = trim(implode(' ', array_filter([
+            $p['full_name'] ?? '', $p['username'] ?? '', $p['company'] ?? '',
+            $p['referral_code'] ?? '', role_name(chat_role($p)),
+        ])));
+        $rows .= '<a class="chat-contact' . ($on ? ' is-on' : '') . '" href="' . e($link($p['id'])) . '"'
+            . ' data-search="' . e(mb_strtolower($hay)) . '">'
             . '<span class="chat-avatar" aria-hidden="true">' . chat_initial($p['full_name'] ?? '') . '</span>'
             . '<span class="chat-contact-text"><strong>' . e($p['full_name']) . '</strong><span>' . e($sub) . '</span></span>'
             . ($c['unread'] ? '<span class="chat-badge">' . (int) $c['unread'] . '</span>'
@@ -436,9 +507,16 @@ function chat_panel_html(string $token, array $me, string $csrf, string $base, ?
             : 'No one to message yet.') . '</p>';
     }
 
+    // The search box filters the list in the browser (assets/js/app.js
+    // chatBox) — the list is already loaded, so there is nothing to wait
+    // for and no round trip.
+    $search = '<label class="chat-search"><span class="sr-only">Search conversations</span>'
+        . '<input type="search" data-chat-search placeholder="Search name, company…" autocomplete="off"></label>';
+
     $list = '<div class="chat-list" data-live="chat-contacts">'
-        . '<div class="chat-list-head"><span class="label"><span class="dot"></span>Conversations</span></div>'
-        . $rows . '</div>';
+        . '<div class="chat-list-head"><span class="label"><span class="dot"></span>Conversations</span>'
+        . ($contacts ? $search : '') . '</div>'
+        . $rows . '<p class="empty chat-nomatch" hidden style="margin:12px">No conversation matches that search.</p></div>';
 
     // The conversation ----------------------------------------------
     if (!$peer) {
@@ -476,6 +554,7 @@ function chat_panel_html(string $token, array $me, string $csrf, string $base, ?
         .   '<div class="chat-head-text"><strong>' . e($p['full_name']) . '</strong>' . $why . '</div>'
         .   chat_role_pill($p)
         . '</div>'
+        . chat_assign_bar_html($token, $me, $csrf, $p, $link($p['id']))
         . '<div class="chat-log" data-live="chat-log">' . $log . '</div>'
         . '<form class="chat-composer" method="post" action="' . e($link($p['id'])) . '">'
         .   '<input type="hidden" name="csrf" value="' . e($csrf) . '">'

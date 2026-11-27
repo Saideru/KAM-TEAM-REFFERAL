@@ -47,7 +47,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($chatRes = chat_ac
 // Assignments: which staff member looks after which client / Growth Partner.
 // Only an assigned pair can message each other.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($asgRes = chat_assign_action($token, $profile))) {
-    if ($asgRes[0] === null) { flash('success', $asgRes[1]); $back('assign'); exit; }
+    // Assigning from the Messages panel comes straight back to that
+    // conversation; from the Assignments panel, back to the panel.
+    if ($asgRes[0] === null) { flash('success', $asgRes[1]); header('Location: ' . chat_assign_return()); exit; }
     $errors[] = $asgRes[0];
 }
 

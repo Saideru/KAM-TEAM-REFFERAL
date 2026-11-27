@@ -1482,3 +1482,25 @@ td > .rcpt-links:only-child { margin-top: 0; }
 .assign-tag small { font-family: var(--font); font-size: var(--text-2xs); letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); }
 .assign-x { border: 0; background: none; color: var(--text-dim); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
 .assign-x:hover, .assign-x:focus { color: var(--rust); }
+
+/* Search box above the conversation list (filters in the browser) */
+.chat-list-head { display: flex; flex-direction: column; gap: 8px; }
+.chat-search { display: block; }
+.chat-search input {
+  width: 100%; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); color: var(--text);
+  font-family: var(--font-body); font-size: var(--text-sm);
+}
+.chat-search input:focus { outline: none; border-color: var(--rust); }
+.chat-search input::placeholder { color: var(--text-dim); }
+
+/* "Staff on this account" bar, admin side of a client / GP conversation */
+.chat-assign {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+}
+.chat-assign .label { margin: 0; }
+.chat-assign .assign-tags { flex: 1; gap: 6px; }
+.assign-add { display: inline-flex; gap: 6px; align-items: center; }
+.assign-add select { padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-sm); max-width: 190px; }

@@ -750,6 +750,28 @@
     }
     toBottom();
     on(document, 'live:updated', toBottom);
+
+    // Search: hide the contacts that do not match, from data-search (name,
+    // username, company, code, account type). Delegated, so it survives a
+    // live refresh swapping the list in.
+    function filter(box) {
+      var list = box.closest('.chat-list');
+      if (!list) return;
+      var q = box.value.trim().toLowerCase();
+      var hits = 0;
+      $$('.chat-contact', list).forEach(function (row) {
+        var show = !q || (row.dataset.search || '').indexOf(q) !== -1;
+        row.hidden = !show;
+        if (show) hits++;
+      });
+      $$('.chat-nomatch', list).forEach(function (el) { el.hidden = !q || hits > 0; });
+    }
+    on(document, 'input', function (ev) {
+      if (ev.target.matches && ev.target.matches('[data-chat-search]')) filter(ev.target);
+    });
+    on(document, 'live:updated', function () {
+      $$('[data-chat-search]').forEach(function (box) { if (box.value.trim()) filter(box); });
+    });
     on(document, 'keydown', function (ev) {
       if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey) return;
       var box = ev.target.closest && ev.target.closest('.chat-composer textarea');
