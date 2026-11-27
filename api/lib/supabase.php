@@ -617,6 +617,7 @@ function audit_log(string $token, string $action, ?string $entityType = null, ?s
 const LOG_CATEGORIES = [
     'auth'     => ['label' => 'Login & terms',             'actions' => ['login_success', 'login_failed', 'logout', 'terms_accepted'], 'prefixes' => []],
     'tasks'    => ['label' => 'Client task log',           'actions' => ['restore_task', 'purge_task'], 'prefixes' => ['task_']],
+    'projects' => ['label' => 'Projects & roadmaps',       'actions' => [], 'prefixes' => ['project_', 'milestone_', 'request_']],
     'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
     'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'purge_account', 'partner_account_opened', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business', 'staff_assigned', 'staff_unassigned'], 'prefixes' => []],
     'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'unilevel_commission', 'basket_credit', 'balance_paid', 'update_transaction', 'restore_transaction', 'purge_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => ['payout_', 'referral_']],
@@ -937,8 +938,15 @@ function approve_activation(string $token, string $txnId, string $adminId): ?str
 
     if ($isDeposit) {
         notify($token, 'Deposit confirmed — ' . $pkgName,
-            'Your 50% advance deposit is confirmed and setup work can begin. Progress reports will appear in your dashboard.'
+            'Your 50% advance deposit is confirmed and setup work can begin. Your project roadmap is in your dashboard.'
             . ($owner ? ' Your KAM Team contact is ' . $owner['full_name'] . '.' : ''), $txn['user_id']);
+        // Accepting the client's payment opens the project: a roadmap of
+        // milestones for the staff member on this account to shape, and
+        // for the client to follow. Required here rather than at the top
+        // of this file: projects.php builds on it, so loading it lazily
+        // keeps the two from chasing each other.
+        require_once __DIR__ . '/projects.php';
+        project_open_for_deposit($token, $txn, $adminId);
         pay_referral_commission($token, $txn);
         // Referral pipeline: the referred client is now Approved.
         referral_stage_set($token, $txn['user_id'], 'approved', [

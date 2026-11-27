@@ -393,6 +393,65 @@ function chat_peer_param(): ?string
     return is_string($peer) && $peer !== '' ? $peer : null;
 }
 
+/**
+ * Everyone at KAM TEAM who has actually dealt with this client: the staff
+ * an admin assigned to them, plus every admin or staff member who has
+ * exchanged messages with them. The contract pack records this, so the
+ * signed document says who the client has been dealing with.
+ *
+ * Each row: id, full_name, role, assigned (bool), messages (int),
+ * last_at (ISO or null). Most recently active first.
+ */
+function chat_people_who_dealt_with(string $token, string $clientId): array
+{
+    $dir  = chat_directory($token);
+    $rows = [];
+
+    $add = function (string $id) use (&$rows, $dir): void {
+        if (isset($rows[$id]) || !isset($dir[$id])) return;
+        if (!in_array(chat_role($dir[$id]), ['admin', 'staff'], true)) return;
+        $rows[$id] = ['id' => $id, 'full_name' => $dir[$id]['full_name'], 'role' => chat_role($dir[$id]),
+                      'assigned' => false, 'messages' => 0, 'last_at' => null];
+    };
+
+    // 1) Assigned by an admin — on the account whether they have written or not.
+    $asg = supabase_request('GET', '/rest/v1/staff_assignments?select=staff_id&member_id=eq.' . urlencode($clientId), null, $token);
+    foreach ((!$asg['error'] && is_array($asg['body'])) ? $asg['body'] : [] as $a) {
+        $add($a['staff_id']);
+        if (isset($rows[$a['staff_id']])) $rows[$a['staff_id']]['assigned'] = true;
+    }
+
+    // 2) Everyone the client has actually messaged with.
+    $threads = chat_my_threads($token, $clientId);
+    if ($threads) {
+        $byThread = [];
+        foreach ($threads as $t) {
+            $peer = $t['a_id'] === $clientId ? $t['b_id'] : $t['a_id'];
+            $byThread[$t['id']] = $peer;
+            $add($peer);
+        }
+        $res = supabase_request('GET', '/rest/v1/chat_messages?select=thread_id,created_at'
+            . '&thread_id=in.(' . implode(',', array_map('urlencode', array_keys($byThread))) . ')'
+            . '&order=created_at.desc&limit=1000', null, $token);
+        foreach ((!$res['error'] && is_array($res['body'])) ? $res['body'] : [] as $m) {
+            $peer = $byThread[$m['thread_id']] ?? null;
+            if (!$peer || !isset($rows[$peer])) continue;
+            $rows[$peer]['messages']++;
+            if ($rows[$peer]['last_at'] === null || $m['created_at'] > $rows[$peer]['last_at']) {
+                $rows[$peer]['last_at'] = $m['created_at'];
+            }
+        }
+    }
+
+    $out = array_values($rows);
+    usort($out, function ($x, $y) {
+        if (($x['last_at'] === null) !== ($y['last_at'] === null)) return $x['last_at'] === null ? 1 : -1;
+        if ($x['last_at'] !== null) return strcmp((string) $y['last_at'], (string) $x['last_at']);
+        return strcasecmp((string) $x['full_name'], (string) $y['full_name']);
+    });
+    return $out;
+}
+
 // The staff assigned to one client / Growth Partner, as profile rows.
 function chat_member_staff(string $token, array $dir, string $memberId): array
 {

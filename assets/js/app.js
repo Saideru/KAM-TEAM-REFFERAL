@@ -17,6 +17,7 @@
  *   tableFilters    filter chips above a table (e.g. users by account type)
  *   statusFields    work tracker: fields that depend on the chosen status
  *   chatBox         messages: keep the thread scrolled, Enter sends
+ *   signPads        draw-to-sign pads on the service agreement
  *   idleWatch       5-minute inactivity sign-out (all signed-in pages)
  */
 (function () {
@@ -781,11 +782,77 @@
     });
   }
 
+  /* ------------------------------------------------------------------
+   * Signature pad: draw with a mouse, pen or finger. The drawing is
+   * written into the hidden field next to the canvas as a PNG data URI,
+   * so the form posts it like any other value. Submitting without a
+   * drawing is blocked here and refused again on the server.
+   * ---------------------------------------------------------------- */
+  function signPads() {
+    $$('[data-sign-pad]').forEach(function (pad) {
+      var canvas = $('canvas', pad);
+      var field  = $('[data-sign-value]', pad);
+      if (!canvas || !field || canvas.dataset.ready) return;
+      canvas.dataset.ready = '1';
+
+      var ctx = canvas.getContext('2d');
+      var drawing = false, dirty = false, last = null;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#1A1917';
+
+      function point(ev) {
+        var r = canvas.getBoundingClientRect();
+        var t = ev.touches && ev.touches[0] ? ev.touches[0] : ev;
+        return { x: (t.clientX - r.left) * (canvas.width / r.width),
+                 y: (t.clientY - r.top) * (canvas.height / r.height) };
+      }
+      function start(ev) { drawing = true; last = point(ev); ev.preventDefault(); }
+      function move(ev) {
+        if (!drawing) return;
+        var p = point(ev);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        last = p; dirty = true;
+        ev.preventDefault();
+      }
+      function stop() {
+        if (!drawing) return;
+        drawing = false;
+        field.value = dirty ? canvas.toDataURL('image/png') : '';
+        pad.classList.toggle('is-signed', dirty);
+      }
+
+      on(canvas, 'mousedown', start); on(canvas, 'mousemove', move);
+      on(document, 'mouseup', stop);
+      on(canvas, 'touchstart', start, { passive: false });
+      on(canvas, 'touchmove', move, { passive: false });
+      on(canvas, 'touchend', stop);
+
+      on($('[data-sign-clear]', pad), 'click', function () {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        dirty = false; field.value = '';
+        pad.classList.remove('is-signed');
+      });
+
+      var form = pad.closest('form');
+      on(form, 'submit', function (ev) {
+        if (field.value) return;
+        ev.preventDefault();
+        pad.classList.add('is-missing');
+        pad.scrollIntoView({ block: 'center' });
+      });
+    });
+  }
+
   /* ---------------------------------------------------------------- */
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
      countdowns, tableHints, copyButtons, adminPanels, tableFilters, netFilters,
-     statusFields, idleWatch, mobileNav, sideDrawers, tableLabels, chatBox, liveRefresh].forEach(function (mod) {
+     statusFields, idleWatch, mobileNav, sideDrawers, tableLabels, chatBox, signPads, liveRefresh].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });
   }

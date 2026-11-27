@@ -4,6 +4,7 @@ require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/payouts.php';
 require_once __DIR__ . '/lib/chat.php';
+require_once __DIR__ . '/lib/intake.php';
 
 // The Growth Partner side of a member account: plan, term, referral code,
 // downline and earnings. It is also the plan chooser every approved member
@@ -225,6 +226,7 @@ $pages = [
     'clients'  => ['label' => 'Clients referred', 'icon' => 'users', 'title' => 'Clients referred'],
     'payout'   => ['label' => 'Payout',        'icon' => 'cash', 'title' => 'Payout / Earnings'],
     'messages' => ['label' => 'Messages',      'icon' => 'chat', 'title' => 'Messages'],
+    'records'  => ['label' => 'Client records', 'icon' => 'brief', 'title' => 'Client intake records'],
     'network'  => ['label' => 'Your downline', 'icon' => 'tree', 'title' => 'Your downline'],
     'courses'  => ['label' => 'Courses',      'icon' => 'education', 'title' => 'Courses'],
     'educational' => ['label' => 'Educational', 'icon' => 'book', 'title' => 'Educational'],
@@ -246,7 +248,7 @@ $chatUnread = chat_unread_total($token, $profile);
 $navItems = array_merge(
     $navOf('overview'),
     [['label' => $pages['messages']['label'], 'href' => $base . '?view=messages', 'icon' => 'chat', 'count' => $chatUnread]],
-    side_group('Referrals', 'users', 'referrals', $navOf('share', 'clients', 'network')),
+    side_group('Referrals', 'users', 'referrals', $navOf('share', 'clients', 'records', 'network')),
     $navOf('payout'),
     $navOf('courses', 'educational'),
     side_group('Account', 'user', 'account', $navOf('plan', 'verify', 'business', 'activate'))
@@ -405,6 +407,10 @@ $navItems = array_merge(
       <?= affiliate_account_html($token, $profile, $canRefer, ['share']) ?>
     <?php elseif ($view === 'clients'): ?>
       <?= clients_referred_html($token, $profile) ?>
+    <?php elseif ($view === 'records'): ?>
+      <section class="card"><h2>Client intake records</h2>
+        <?= intake_partner_html($token, $profile) ?>
+      </section>
     <?php elseif ($view === 'messages'): ?>
       <?= chat_panel_html($token, $profile, $csrf, $base . '?view=messages', chat_peer_param()) ?>
       <p class="hint" style="margin-top:10px">You can message the KAM Team admins any time. A staff member appears here once an admin assigns them to your account.</p>

@@ -4,6 +4,7 @@ require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/payouts.php';
 require_once __DIR__ . '/lib/chat.php';
+require_once __DIR__ . '/lib/contract.php';
 
 ['token' => $token, 'profile' => $profile] = require_role('admin');
 $errors = [];
@@ -51,6 +52,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($asgRes = chat_ass
     // conversation; from the Assignments panel, back to the panel.
     if ($asgRes[0] === null) { flash('success', $asgRes[1]); header('Location: ' . chat_assign_return()); exit; }
     $errors[] = $asgRes[0];
+}
+
+// Service agreements: review what the client signed, complete the open
+// order-form terms and counter-sign — that unlocks their deposit.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($conRes = contract_admin_action($token, $profile))) {
+    if ($conRes[0] === null) { flash('success', $conRes[1]); $back('contracts'); exit; }
+    $errors[] = $conRes[0];
 }
 
 // Payouts: mark paid / reject, and the password-confirmed killswitch.
@@ -757,6 +765,7 @@ $binTasksRes  = supabase_request('GET', '/rest/v1/client_tasks?select=id,task_co
 $binTasks     = is_array($binTasksRes['body']) && !$binTasksRes['error'] ? $binTasksRes['body'] : [];
 $trashCount   = count($binUsers) + count($binTxns) + count($binPkgs) + count($binTasks);
 $chatUnread = chat_unread_total($token, $profile);
+$contractsWaiting = contracts_pending_count($token);
 $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 ?>
 <?= ui_head([
@@ -783,6 +792,7 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
         ['label' => 'Approvals',   'panel' => 'approvals', 'icon' => 'check', 'count' => $approvalCount],
         ['label' => 'KYC',         'panel' => 'kyc',       'icon' => 'id',    'count' => count($kycPending)],
         ['label' => 'Assignments', 'panel' => 'assign',    'icon' => 'link'],
+        ['label' => 'Agreements',  'panel' => 'contracts', 'icon' => 'brief', 'count' => $contractsWaiting],
     ]),
     side_group('Referrals', 'tree', 'referrals', [
         ['label' => 'Referral pipeline', 'panel' => 'pipeline',  'icon' => 'check'],
@@ -807,6 +817,9 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
     side_group('Client work', 'brief', 'client-work', [
         ['label' => 'Task tracker',   'href' => '/work.php',                  'icon' => 'check'],
         ['label' => 'Client reports', 'href' => '/work.php?view=reports',     'icon' => 'log'],
+        ['label' => 'Projects & roadmaps', 'href' => '/work.php?view=projects', 'icon' => 'tree'],
+        ['label' => 'This week',           'href' => '/work.php?view=week',     'icon' => 'check'],
+        ['label' => 'Intake forms',        'href' => '/work.php?view=intake',   'icon' => 'brief'],
         ['label' => 'Staff payouts',  'href' => '/work.php?view=payouts',     'icon' => 'cash'],
         ['label' => 'Program docs',   'href' => '/report.php?doc=components', 'icon' => 'brief'],
     ]),
@@ -832,6 +845,10 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
   ]) ?>
   </div>
 
+  <?php if ($contractsWaiting): ?>
+    <div class="alert alert-warn"><strong><?= $contractsWaiting ?> signed service agreement<?= $contractsWaiting === 1 ? '' : 's' ?> waiting for your counter-signature.</strong>
+      A client cannot pay their deposit until you sign. <a href="#contracts" onclick="document.querySelector('.admin-tab[data-panel=contracts]').click()">Review now →</a></div>
+  <?php endif; ?>
   <div data-live="approval-alert">
   <?php if ($approvalCount): ?>
     <div class="alert alert-warn"><strong><?= count($applications) ?> account application<?= count($applications) === 1 ? '' : 's' ?> and <?= count($pendingPayments) ?> payment<?= count($pendingPayments) === 1 ? '' : 's' ?> (Growth Partner plans &amp; client deposits) waiting.</strong> <a href="#approvals" onclick="document.querySelector('.admin-tab[data-panel=approvals]').click()">Review now →</a></div>
@@ -1647,6 +1664,11 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <p class="hint" style="margin:8px 0 0">Hidden packages keep every past transaction that points at them.</p>
     </div>
     <?php endif; ?>
+  </div>
+
+  <!-- AGREEMENTS -->
+  <div id="panel-contracts" class="admin-panel">
+    <?= contract_admin_html($token, $profile, $csrf, isset($_GET['contract']) && is_string($_GET['contract']) ? $_GET['contract'] : null) ?>
   </div>
 
   <!-- MESSAGES -->

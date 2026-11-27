@@ -1504,3 +1504,112 @@ td > .rcpt-links:only-child { margin-top: 0; }
 .chat-assign .assign-tags { flex: 1; gap: 6px; }
 .assign-add { display: inline-flex; gap: 6px; align-items: center; }
 .assign-add select { padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-sm); max-width: 190px; }
+
+/* ---------- Roadmap: the project board (staff) ---------- */
+.road-step { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); margin-bottom: 10px; overflow: hidden; }
+.road-step-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.road-num { font-family: var(--font); font-size: var(--text-sm); font-weight: 700; color: var(--rust); letter-spacing: .08em; }
+.road-step-title { flex: 1; display: grid; min-width: 0; }
+.road-step-title strong { font-size: var(--text-base); }
+.road-step-title .hint { font-size: var(--text-xs); }
+.road-step-body { padding: 10px 12px; }
+.road-add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.road-add input { flex: 1; min-width: 140px; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-sm); }
+.road-add input[name="title"] { flex: 3; min-width: 220px; }
+.road-step-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.road-inline { display: inline-flex; gap: 6px; align-items: center; }
+.road-inline select { padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-sm); }
+.road-edit > summary, .road-new > summary, .road-ask > summary { list-style: none; cursor: pointer; }
+.road-edit > summary::-webkit-details-marker, .road-new > summary::-webkit-details-marker, .road-ask > summary::-webkit-details-marker { display: none; }
+.road-request { display: grid; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.road-request:last-child { border-bottom: 0; }
+.road-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.road-decide input, .road-decide select { padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: var(--text-sm); }
+.road-decide input[name="decision_note"] { flex: 1; min-width: 200px; }
+
+/* ---------- Roadmap: what the client sees ---------- */
+.road-client { list-style: none; margin: 14px 0 0; padding: 0 0 0 22px; border-left: 2px solid var(--border); display: grid; gap: 16px; }
+.road-client-step { position: relative; }
+.road-client-step::before {
+  content: ''; position: absolute; left: -29px; top: 4px; width: 12px; height: 12px;
+  border-radius: 999px; background: var(--surface); border: 2px solid var(--border-light);
+}
+.road-client-step.is-in_progress::before, .road-client-step.is-for_review::before { border-color: var(--rust); background: var(--orange-dim); }
+.road-client-step.is-completed::before { background: #1A1917; border-color: #1A1917; }
+.road-client-step.is-blocked::before { border-color: var(--red); background: var(--red-dim); }
+.road-client-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.road-client-head strong { font-size: var(--text-base); }
+.road-client-tasks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.road-client-tasks li {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  font-size: var(--text-md);
+}
+.road-client-tasks li > span:first-child { flex: 1; min-width: 160px; }
+.road-client-tasks .hint { font-size: var(--text-xs); }
+
+@media (max-width: 760px) {
+  .road-decide input, .road-decide select, .road-add input { min-width: 0; width: 100%; }
+  .road-client { padding-left: 16px; }
+  .road-client-step::before { left: -23px; }
+}
+
+/* ---------- Service agreement + e-signature ---------- */
+.contract-form > summary, .road-ask > summary { display: inline-block; }
+.contract-form-body { margin-top: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.contract-form-body h3 { font-size: var(--text-base); margin: 18px 0 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.contract-form-body h3:first-of-type { border-top: 0; padding-top: 0; margin-top: 12px; }
+.contract-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-top: 12px; }
+.contract-figures > div { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); display: grid; gap: 2px; }
+.contract-figures strong { font-size: var(--text-lg); font-family: var(--font-head); }
+.contract-figures strong.cyan { color: var(--rust); }
+.contract-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; font-size: var(--text-md); color: var(--text-muted); }
+.contract-acks { list-style: none; padding-left: 0; font-family: var(--font); }
+.contract-state { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.contract-review { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; background: var(--surface-2); }
+.contract-review > summary { padding: 10px 12px; cursor: pointer; font-size: var(--text-md); }
+.contract-review-body { padding: 0 12px 12px; }
+.contract-review-body h3 { font-size: var(--text-base); margin: 16px 0 8px; }
+.contract-decline { display: flex; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.contract-decline input { flex: 1; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-sm); }
+.contract-contacts { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.contract-contacts li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-md); }
+
+.sign-pad { border: 1px dashed var(--border-light); border-radius: var(--radius); background: var(--surface); padding: 6px; }
+.sign-pad.is-signed { border-style: solid; border-color: var(--rust); }
+.sign-pad.is-missing { border-color: var(--red); background: var(--red-dim); }
+.sign-pad canvas { display: block; width: 100%; height: 150px; touch-action: none; cursor: crosshair; background: var(--surface-2); border-radius: var(--radius-sm); }
+.sign-pad-tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; }
+.sign-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 10px; }
+.sign-block { margin-top: 6px; }
+.sign-img { display: block; max-width: 260px; max-height: 110px; border-bottom: 1px solid var(--text); }
+.sign-empty { display: grid; place-items: center; height: 80px; max-width: 260px; color: var(--text-dim); font-family: var(--font); font-size: var(--text-xs); border: 1px dashed var(--border); }
+.sign-meta { display: grid; gap: 1px; margin-top: 4px; font-size: var(--text-sm); }
+@media (max-width: 760px) { .sign-row { grid-template-columns: 1fr; } }
+@media print { .sign-pad-tools, .contract-decline { display: none; } }
+
+/* ---------- "This week" board (client, staff and admin) ---------- */
+.week-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.week-col { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 10px 12px; }
+.week-col-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.week-col-head strong { font-size: var(--text-base); }
+.week-late { border-color: rgba(184, 66, 15, .35); background: var(--red-dim); }
+.week-now  { border-color: var(--rust); }
+.week-done { opacity: .85; }
+.week-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.week-list li { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-md); }
+.week-list li .pill { justify-self: start; }
+.week-list .hint { font-size: var(--text-xs); }
+
+/* ---------- Client intake form responses ---------- */
+.intake-row { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); margin-bottom: 8px; }
+.intake-row > summary { padding: 10px 12px; cursor: pointer; font-size: var(--text-md); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.intake-row > summary::-webkit-details-marker { display: none; }
+.intake-body { padding: 0 12px 12px; }
+.intake-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.intake-top > div { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.intake-work { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.intake-work select, .intake-work input { padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: var(--text-sm); }
+.intake-work input[name="note"] { flex: 1; min-width: 200px; }
+.intake-mine { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.intake-mine:last-child { border-bottom: 0; }

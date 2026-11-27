@@ -5,6 +5,8 @@ require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/work.php';
 require_once __DIR__ . '/lib/payouts.php';
 require_once __DIR__ . '/lib/chat.php';
+require_once __DIR__ . '/lib/projects.php';
+require_once __DIR__ . '/lib/intake.php';
 
 // Client Work Documentation & Reporting (SOP-OPS-001) — admin & staff workspace.
 // Staff can do everything here except approve and deliver client reports.
@@ -26,6 +28,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_te
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($chatRes = chat_action($token, $profile))) {
     if ($chatRes[0] === null) { header('Location: /work.php?view=messages&peer=' . urlencode((string) ($_POST['peer_id'] ?? ''))); exit; }
     $errors[] = $chatRes[0];
+}
+
+// Client intake forms: pull the response sheet, work what came in.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($intRes = intake_team_action($token, $profile))) {
+    if ($intRes[0] === null) { flash('success', $intRes[1]); header('Location: /work.php?view=intake'); exit; }
+    $errors[] = $intRes[0];
+}
+
+// Projects & roadmaps: the board staff build for each approved package,
+// and the client requests that land on it (api/lib/projects.php).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($prjRes = project_team_action($token, $profile))) {
+    if ($prjRes[0] === null) {
+        if ($prjRes[1]) flash('success', $prjRes[1]);
+        header('Location: ' . ($GLOBALS['project_redirect'] ?? '/work.php?view=projects')); exit;
+    }
+    $errors[] = $prjRes[0];
 }
 $csrf   = csrf_token();
 $adminId = $profile['id'];
@@ -127,6 +145,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             $note = $input['note'] ?: ($to === 'completed' ? 'Verified against acceptance criteria' . ($task['reviewer'] ? ' by ' . $task['reviewer'] : '') . '.'
                   : ($to === 'cancelled' ? 'Cancelled: ' . $input['cancel_reason'] . ' (approved by ' . $input['cancel_approved_by'] . ')' : 'Status changed.'));
             task_log($token, $task, $to === 'completed' ? 'completion' : 'update', $note, $task['status'], $to, $s('author_tag', 80));
+            // A completed task can put a milestone (or the whole project)
+            // over the line — the client hears about it once.
+            if (!empty($task['project_id'])) project_progress_notify($token, $task['project_id']);
             if ($to === 'for_review' && $task['reviewer']) {
                 foreach (['admin', 'staff'] as $aud) {
                     notify($token, 'Task for review: ' . $task['task_code'], $task['title'] . ' is ready for verification (' . $task['reviewer'] . ').', null, $aud, '/work.php?task=' . $task['id']);
@@ -245,7 +266,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 }
 
 // ------------------------------------------------------------------ views
-$view   = isset($_GET['task']) ? 'task' : (isset($_GET['report']) ? 'report' : (in_array($_GET['view'] ?? '', ['reports', 'payouts', 'messages'], true) ? $_GET['view'] : 'tasks'));
+$view   = isset($_GET['task']) ? 'task' : (isset($_GET['report']) ? 'report'
+        : (isset($_GET['project']) ? 'project'
+        : (in_array($_GET['view'] ?? '', ['reports', 'payouts', 'messages', 'projects', 'week', 'intake'], true) ? $_GET['view'] : 'tasks')));
 $fClient = $validClient($_GET['client'] ?? '');
 $fStatus = isset(TASK_STATUSES[$_GET['status'] ?? '']) ? $_GET['status'] : '';
 
@@ -253,6 +276,10 @@ $used = $get('/rest/v1/client_tasks?select=assignee,reviewer&order=updated_at.de
 $tags = array_values(array_unique(array_filter(array_merge(array_column($admins, 'full_name'),
     array_column($used, 'assignee'), array_column($used, 'reviewer')))));
 $chatUnread = chat_unread_total($token, $profile);
+$intakeNew  = intake_new_count($token);
+// Staff, for the "project lead" pickers.
+$staffMap = array_column($get('/rest/v1/profiles?select=id,full_name&role=eq.staff&status=eq.accepted&deleted_at=is.null&order=full_name.asc'), 'full_name', 'id');
+$project  = $view === 'project' ? project_get($token, (string) $_GET['project']) : null;
 $datalist = '<datalist id="people">' . implode('', array_map(fn($n) => '<option value="' . e($n) . '">', $tags)) . '</datalist>';
 $opts = fn(array $map, ?string $sel, string $blank = '') => ($blank !== '' ? '<option value="">' . e($blank) . '</option>' : '')
     . implode('', array_map(fn($k, $v) => '<option value="' . e($k) . '"' . ((string) $sel === (string) $k ? ' selected' : '') . '>' . e($v) . '</option>', array_keys($map), $map));
@@ -311,13 +338,20 @@ if ($view === 'report') {
     side_group('Work', 'check', 'work', [
         ['label' => 'Task tracker',   'href' => '/work.php',              'icon' => 'check'],
         ['label' => 'Client reports', 'href' => '/work.php?view=reports', 'icon' => 'log'],
+        ['label' => 'Projects & roadmaps', 'href' => '/work.php?view=projects', 'icon' => 'tree'],
+        ['label' => 'This week',           'href' => '/work.php?view=week',     'icon' => 'check'],
+        ['label' => 'Intake forms',        'href' => '/work.php?view=intake',   'icon' => 'brief', 'count' => $intakeNew],
     ]),
     [
         ['label' => 'Messages',     'href' => '/work.php?view=messages',    'icon' => 'chat', 'count' => $chatUnread],
         ['label' => 'Payouts',      'href' => '/work.php?view=payouts',     'icon' => 'cash'],
         ['label' => 'Program docs', 'href' => '/report.php?doc=components', 'icon' => 'brief'],
     ]
-),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : (in_array($view, ['payouts', 'messages'], true) ? '/work.php?view=' . $view : '/work.php')) ?>
+),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports'
+   : ($view === 'intake' ? '/work.php?view=intake'
+   : ($view === 'week' ? '/work.php?view=week'
+   : (in_array($view, ['projects', 'project'], true) ? '/work.php?view=projects'
+   : (in_array($view, ['payouts', 'messages'], true) ? '/work.php?view=' . $view : '/work.php'))))) ?>
 <main class="wrap" id="main" tabindex="-1">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>
   <h1>Client work. <span class="accent">Traceable, verified, reported.</span></h1>
@@ -326,6 +360,30 @@ if ($view === 'report') {
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
   <?= $datalist ?>
+
+<?php if ($view === 'intake'): ?>
+  <?= intake_team_html($token, $profile, $csrf, $clientName,
+        isset(INTAKE_STATUSES[$_GET['status'] ?? '']) ? (string) $_GET['status'] : null,
+        isset($_GET['response']) && is_string($_GET['response']) ? $_GET['response'] : null) ?>
+<?php endif; ?>
+
+<?php if ($view === 'week'): ?>
+  <section class="card" style="margin-bottom:12px"><h2>This week</h2>
+    <p class="hint" style="margin:0">Every roadmap task across all projects, by when it is due. A project opens with one task per week of its plan, so this board is never empty while work is running.</p></section>
+  <div data-live="work-week"><?= project_week_html(project_week_rows($token), true) ?></div>
+<?php endif; ?>
+
+<?php if ($view === 'projects'): ?>
+  <div data-live="work-projects"><?= project_list_html($token, $profile, $csrf, $clientName, $pkgName, $staffMap) ?></div>
+<?php endif; ?>
+
+<?php if ($view === 'project'): ?>
+  <?php if (!$project): ?>
+    <p class="empty">Project not found. <a href="/work.php?view=projects">Back to projects</a></p>
+  <?php else: ?>
+    <div data-live="work-project"><?= project_board_html($token, $profile, $csrf, $project, $staffMap) ?></div>
+  <?php endif; ?>
+<?php endif; ?>
 
 <?php if ($view === 'messages'): ?>
   <?= chat_panel_html($token, $profile, $csrf, '/work.php?view=messages', chat_peer_param()) ?>
