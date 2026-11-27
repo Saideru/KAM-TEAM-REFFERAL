@@ -3,6 +3,7 @@ require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/payouts.php';
+require_once __DIR__ . '/lib/chat.php';
 
 ['token' => $token, 'profile' => $profile] = require_role('admin');
 $errors = [];
@@ -35,6 +36,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($pipeRes = pipelin
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($cpRes = client_payment_action($token, $profile))) {
     if ($cpRes[0] === null) { flash('success', $cpRes[1]); $back('clientpay'); exit; }
     $errors[] = $cpRes[0];
+}
+
+// Messages: an admin reaches every client, Growth Partner and staff member.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($chatRes = chat_action($token, $profile))) {
+    if ($chatRes[0] === null) { header('Location: /dashboard-admin.php?peer=' . urlencode((string) ($_POST['peer_id'] ?? '')) . '#messages'); exit; }
+    $errors[] = $chatRes[0];
+}
+
+// Assignments: which staff member looks after which client / Growth Partner.
+// Only an assigned pair can message each other.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($asgRes = chat_assign_action($token, $profile))) {
+    if ($asgRes[0] === null) { flash('success', $asgRes[1]); $back('assign'); exit; }
+    $errors[] = $asgRes[0];
 }
 
 // Payouts: mark paid / reject, and the password-confirmed killswitch.
@@ -740,6 +754,7 @@ $binPkgs      = array_values(array_filter($allPkgs, fn($p) => empty($p['active']
 $binTasksRes  = supabase_request('GET', '/rest/v1/client_tasks?select=id,task_code,title,status,cancel_reason,cancel_approved_by,updated_at,client:profiles!client_tasks_client_id_fkey(full_name)&status=eq.cancelled&order=updated_at.desc&limit=100', null, $token);
 $binTasks     = is_array($binTasksRes['body']) && !$binTasksRes['error'] ? $binTasksRes['body'] : [];
 $trashCount   = count($binUsers) + count($binTxns) + count($binPkgs) + count($binTasks);
+$chatUnread = chat_unread_total($token, $profile);
 $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 ?>
 <?= ui_head([
@@ -760,10 +775,12 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
 
 <div class="shell">
 <?= app_sidebar(array_merge(
+    [['label' => 'Messages', 'panel' => 'messages', 'icon' => 'chat', 'count' => $chatUnread]],
     side_group('People', 'users', 'people', [
-        ['label' => 'Users',     'panel' => 'users',     'icon' => 'users'],
-        ['label' => 'Approvals', 'panel' => 'approvals', 'icon' => 'check', 'count' => $approvalCount],
-        ['label' => 'KYC',       'panel' => 'kyc',       'icon' => 'id',    'count' => count($kycPending)],
+        ['label' => 'Users',       'panel' => 'users',     'icon' => 'users'],
+        ['label' => 'Approvals',   'panel' => 'approvals', 'icon' => 'check', 'count' => $approvalCount],
+        ['label' => 'KYC',         'panel' => 'kyc',       'icon' => 'id',    'count' => count($kycPending)],
+        ['label' => 'Assignments', 'panel' => 'assign',    'icon' => 'link'],
     ]),
     side_group('Referrals', 'tree', 'referrals', [
         ['label' => 'Referral pipeline', 'panel' => 'pipeline',  'icon' => 'check'],
@@ -1628,6 +1645,16 @@ $firstName = $profile ? explode(' ', $profile['full_name'])[0] : 'Admin';
       <p class="hint" style="margin:8px 0 0">Hidden packages keep every past transaction that points at them.</p>
     </div>
     <?php endif; ?>
+  </div>
+
+  <!-- MESSAGES -->
+  <div id="panel-messages" class="admin-panel">
+    <?= chat_panel_html($token, $profile, $csrf, '/dashboard-admin.php', chat_peer_param(), '#messages') ?>
+  </div>
+
+  <!-- ASSIGNMENTS -->
+  <div id="panel-assign" class="admin-panel" data-live="panel-assign">
+    <?= chat_assignments_html($token, $profile, $csrf) ?>
   </div>
 
   <!-- AUDIT LOGS -->

@@ -4,6 +4,7 @@ require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/work.php';
 require_once __DIR__ . '/lib/payouts.php';
+require_once __DIR__ . '/lib/chat.php';
 
 // Client Work Documentation & Reporting (SOP-OPS-001) — admin & staff workspace.
 // Staff can do everything here except approve and deliver client reports.
@@ -18,6 +19,13 @@ rollup_terminated($token);
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($poRes = payout_team_action($token, $profile))) {
     if ($poRes[0] === null) { flash('success', $poRes[1]); header('Location: /work.php?view=payouts'); exit; }
     $errors[] = $poRes[0];
+}
+
+// Messages: admins reach everyone, staff reach the admins plus the clients
+// and Growth Partners an admin assigned to them (api/lib/chat.php).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($chatRes = chat_action($token, $profile))) {
+    if ($chatRes[0] === null) { header('Location: /work.php?view=messages&peer=' . urlencode((string) ($_POST['peer_id'] ?? ''))); exit; }
+    $errors[] = $chatRes[0];
 }
 $csrf   = csrf_token();
 $adminId = $profile['id'];
@@ -237,13 +245,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
 }
 
 // ------------------------------------------------------------------ views
-$view   = isset($_GET['task']) ? 'task' : (isset($_GET['report']) ? 'report' : (($_GET['view'] ?? '') === 'reports' ? 'reports' : (($_GET['view'] ?? '') === 'payouts' ? 'payouts' : 'tasks')));
+$view   = isset($_GET['task']) ? 'task' : (isset($_GET['report']) ? 'report' : (in_array($_GET['view'] ?? '', ['reports', 'payouts', 'messages'], true) ? $_GET['view'] : 'tasks'));
 $fClient = $validClient($_GET['client'] ?? '');
 $fStatus = isset(TASK_STATUSES[$_GET['status'] ?? '']) ? $_GET['status'] : '';
 
 $used = $get('/rest/v1/client_tasks?select=assignee,reviewer&order=updated_at.desc&limit=300');
 $tags = array_values(array_unique(array_filter(array_merge(array_column($admins, 'full_name'),
     array_column($used, 'assignee'), array_column($used, 'reviewer')))));
+$chatUnread = chat_unread_total($token, $profile);
 $datalist = '<datalist id="people">' . implode('', array_map(fn($n) => '<option value="' . e($n) . '">', $tags)) . '</datalist>';
 $opts = fn(array $map, ?string $sel, string $blank = '') => ($blank !== '' ? '<option value="">' . e($blank) . '</option>' : '')
     . implode('', array_map(fn($k, $v) => '<option value="' . e($k) . '"' . ((string) $sel === (string) $k ? ' selected' : '') . '>' . e($v) . '</option>', array_keys($map), $map));
@@ -304,10 +313,11 @@ if ($view === 'report') {
         ['label' => 'Client reports', 'href' => '/work.php?view=reports', 'icon' => 'log'],
     ]),
     [
+        ['label' => 'Messages',     'href' => '/work.php?view=messages',    'icon' => 'chat', 'count' => $chatUnread],
         ['label' => 'Payouts',      'href' => '/work.php?view=payouts',     'icon' => 'cash'],
         ['label' => 'Program docs', 'href' => '/report.php?doc=components', 'icon' => 'brief'],
     ]
-),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : ($view === 'payouts' ? '/work.php?view=payouts' : '/work.php')) ?>
+),'Client work', in_array($view, ['reports', 'report'], true) ? '/work.php?view=reports' : (in_array($view, ['payouts', 'messages'], true) ? '/work.php?view=' . $view : '/work.php')) ?>
 <main class="wrap" id="main" tabindex="-1">
   <span class="label"><span class="dot"></span><?= SOP_ID ?> v<?= SOP_VERSION ?> // Client work documentation &amp; reporting</span>
   <h1>Client work. <span class="accent">Traceable, verified, reported.</span></h1>
@@ -316,6 +326,13 @@ if ($view === 'report') {
   <?php if ($notice): ?><div class="alert alert-<?= e($notice['type']) ?>"><?= e($notice['message']) ?></div><?php endif; ?>
   <?php if ($errors): ?><div class="alert alert-error"><?php foreach ($errors as $err): ?><div>> <?= e($err) ?></div><?php endforeach; ?></div><?php endif; ?>
   <?= $datalist ?>
+
+<?php if ($view === 'messages'): ?>
+  <?= chat_panel_html($token, $profile, $csrf, '/work.php?view=messages', chat_peer_param()) ?>
+  <?php if (!$isAdmin): ?>
+    <p class="hint" style="margin-top:10px">You can message the admins any time. Clients and Growth Partners appear here once an admin assigns them to you.</p>
+  <?php endif; ?>
+<?php endif; ?>
 
 <?php if ($view === 'payouts'): ?>
   <div data-live="work-payouts"><?= payout_queue_html($token, $profile, $csrf, '/work.php?receipt=') ?></div>

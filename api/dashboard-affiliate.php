@@ -3,6 +3,7 @@ require_once __DIR__ . '/lib/supabase.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/ui.php';
 require_once __DIR__ . '/lib/payouts.php';
+require_once __DIR__ . '/lib/chat.php';
 
 // The Growth Partner side of a member account: plan, term, referral code,
 // downline and earnings. It is also the plan chooser every approved member
@@ -60,6 +61,13 @@ $offer = function (array $pk) use ($tier, $unlimited): ?string {
     if ($tier === 'basic')          return 'Upgrade to Standard';
     return 'Choose Standard';
 };
+
+// Messages: a Growth Partner reaches the admins, and the staff an admin
+// assigned to them (api/lib/chat.php).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($chatRes = chat_action($token, $profile))) {
+    if ($chatRes[0] === null) { header('Location: /dashboard-affiliate.php?view=messages&peer=' . urlencode((string) ($_POST['peer_id'] ?? ''))); exit; }
+    $errors[] = $chatRes[0];
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $act = $_POST['action'] ?? '';
@@ -216,7 +224,10 @@ $pages = [
     'share'    => ['label' => 'Referral link', 'icon' => 'link', 'title' => 'Your referral code'],
     'clients'  => ['label' => 'Clients referred', 'icon' => 'users', 'title' => 'Clients referred'],
     'payout'   => ['label' => 'Payout',        'icon' => 'cash', 'title' => 'Payout / Earnings'],
+    'messages' => ['label' => 'Messages',      'icon' => 'chat', 'title' => 'Messages'],
     'network'  => ['label' => 'Your downline', 'icon' => 'tree', 'title' => 'Your downline'],
+    'courses'  => ['label' => 'Courses',      'icon' => 'education', 'title' => 'Courses'],
+    'educational' => ['label' => 'Educational', 'icon' => 'book', 'title' => 'Educational'],
 ];
 if (!$isAdmin && !$switchedFromAdmin) $pages['verify']   = ['label' => 'Verify ID',               'icon' => 'id',    'title' => 'Verify your ID'];
 if ($hasBusiness)                     $pages['business'] = ['label' => 'Your business',           'icon' => 'brief', 'title' => 'Your business'];
@@ -231,10 +242,13 @@ $navOf = fn(string ...$keys): array => array_map(
     fn($k) => isset($pages[$k]) ? ['label' => $pages[$k]['label'], 'href' => $base . '?view=' . $k, 'icon' => $pages[$k]['icon']] : null,
     $keys
 );
+$chatUnread = chat_unread_total($token, $profile);
 $navItems = array_merge(
     $navOf('overview'),
+    [['label' => $pages['messages']['label'], 'href' => $base . '?view=messages', 'icon' => 'chat', 'count' => $chatUnread]],
     side_group('Referrals', 'users', 'referrals', $navOf('share', 'clients', 'network')),
     $navOf('payout'),
+    $navOf('courses', 'educational'),
     side_group('Account', 'user', 'account', $navOf('plan', 'verify', 'business', 'activate'))
 );
 ?>
@@ -391,6 +405,9 @@ $navItems = array_merge(
       <?= affiliate_account_html($token, $profile, $canRefer, ['share']) ?>
     <?php elseif ($view === 'clients'): ?>
       <?= clients_referred_html($token, $profile) ?>
+    <?php elseif ($view === 'messages'): ?>
+      <?= chat_panel_html($token, $profile, $csrf, $base . '?view=messages', chat_peer_param()) ?>
+      <p class="hint" style="margin-top:10px">You can message the KAM Team admins any time. A staff member appears here once an admin assigns them to your account.</p>
     <?php elseif ($view === 'payout'): ?>
       <?= affiliate_account_html($token, $profile, $canRefer, ['stats']) ?>
       <?= payout_page_html($token, $profile, $csrf) ?>
@@ -400,6 +417,18 @@ $navItems = array_merge(
       <?= kyc_section($token, $profile) ?>
     <?php elseif ($view === 'business'): ?>
       <?= business_card($token, $profile, $csrf) ?>
+    <?php elseif ($view === 'courses'): ?>
+      <section class="card">
+        <span class="label">Learning // Courses</span>
+        <h2 style="margin:6px 0 4px">Courses</h2>
+        <p class="hint" style="margin:0">Course resources and training materials will appear here.</p>
+      </section>
+    <?php elseif ($view === 'educational'): ?>
+      <section class="card">
+        <span class="label">Learning // Educational</span>
+        <h2 style="margin:6px 0 4px">Educational</h2>
+        <p class="hint" style="margin:0">Educational resources and program materials will appear here.</p>
+      </section>
     <?php endif; ?>
     </div>
   <?php endif; ?>

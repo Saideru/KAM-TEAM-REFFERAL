@@ -4,6 +4,7 @@ require_once __DIR__ . '/lib/payouts.php';
 require_once __DIR__ . '/lib/logo.php';
 require_once __DIR__ . '/lib/work.php';
 require_once __DIR__ . '/lib/ui.php';
+require_once __DIR__ . '/lib/chat.php';
 
 // The Client side of a member account — permanent. Buys service packages
 // (50% advance deposit before setup starts), follows work progress and reads
@@ -33,6 +34,13 @@ $pendingPkg  = array_flip(array_column($pendingDeps, 'package_id'));
 
 $pay      = get_settings($token, ['payment_qr', 'payment_account', 'payment_instructions']);
 $payReady = $pay['payment_qr'] !== '';
+
+// Messages: a client reaches the admins, and the staff an admin assigned
+// to their account (api/lib/chat.php).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check() && ($chatRes = chat_action($token, $profile))) {
+    if ($chatRes[0] === null) { header('Location: /dashboard-client.php?peer=' . urlencode((string) ($_POST['peer_id'] ?? '')) . '#messages'); exit; }
+    $errors[] = $chatRes[0];
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $act = $_POST['action'] ?? '';
@@ -113,7 +121,8 @@ $contact   = !empty($profile['assigned_admin'])
 
 <div class="shell">
 <?= app_sidebar(array_merge(
-    [['label' => 'Overview', 'href' => '#overview', 'icon' => 'home']],
+    [['label' => 'Overview', 'href' => '#overview', 'icon' => 'home'],
+     ['label' => 'Messages', 'href' => '#messages', 'icon' => 'chat', 'count' => chat_unread_total($token, $profile)]],
     side_group('My services', 'box', 'services', [
         ['label' => 'Service packages', 'href' => '#packages', 'icon' => 'box'],
         ['label' => 'Work progress',    'href' => '#progress', 'icon' => 'check'],
@@ -235,6 +244,14 @@ $contact   = !empty($profile['assigned_admin'])
     <?php else: ?>
       <p class="hint" style="margin:8px 0 0">Your code is being created — it appears here shortly.</p>
     <?php endif; ?>
+  </section>
+
+  <section id="messages" style="margin-bottom:20px">
+    <?= ui_terminal_head('messages.sh // your KAM Team contacts') ?>
+    <div class="terminal-body">
+      <?= chat_panel_html($token, $profile, $csrf, '/dashboard-client.php', chat_peer_param(), '#messages') ?>
+      <p class="hint" style="margin:10px 0 0">You can message the KAM Team admins any time. A staff member appears here once an admin assigns them to your account.</p>
+    </div>
   </section>
 
   <section class="card" id="reports" style="margin-bottom:12px"><h2>Reports</h2>

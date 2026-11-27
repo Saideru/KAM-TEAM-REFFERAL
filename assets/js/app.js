@@ -16,6 +16,7 @@
  *   adminPanels     admin sidebar tabs and their panels
  *   tableFilters    filter chips above a table (e.g. users by account type)
  *   statusFields    work tracker: fields that depend on the chosen status
+ *   chatBox         messages: keep the thread scrolled, Enter sends
  *   idleWatch       5-minute inactivity sign-out (all signed-in pages)
  */
 (function () {
@@ -736,11 +737,33 @@
     on(document, 'live:updated', function () { label(document); });
   }
 
+  /* ------------------------------------------------------------------
+   * Messages: the open conversation scrolls to the newest message, and
+   * stays there when liveRefresh swaps a new message in. Enter sends,
+   * Shift+Enter starts a new line.
+   * ---------------------------------------------------------------- */
+  function chatBox() {
+    if (!$('.chat')) return;
+
+    function toBottom() {
+      $$('.chat-log').forEach(function (log) { log.scrollTop = log.scrollHeight; });
+    }
+    toBottom();
+    on(document, 'live:updated', toBottom);
+    on(document, 'keydown', function (ev) {
+      if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey) return;
+      var box = ev.target.closest && ev.target.closest('.chat-composer textarea');
+      if (!box || !box.value.trim()) return;
+      ev.preventDefault();
+      if (box.form.requestSubmit) box.form.requestSubmit(); else box.form.submit();
+    });
+  }
+
   /* ---------------------------------------------------------------- */
   function boot() {
     [authTabs, passwordToggles, termsChecklist, scrollSpy, notifications,
      countdowns, tableHints, copyButtons, adminPanels, tableFilters, netFilters,
-     statusFields, idleWatch, mobileNav, sideDrawers, tableLabels, liveRefresh].forEach(function (mod) {
+     statusFields, idleWatch, mobileNav, sideDrawers, tableLabels, chatBox, liveRefresh].forEach(function (mod) {
       try { mod(); } catch (err) { if (window.console) console.error('[app]', mod.name, err); }
     });
   }

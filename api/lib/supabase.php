@@ -618,7 +618,7 @@ const LOG_CATEGORIES = [
     'auth'     => ['label' => 'Login & terms',             'actions' => ['login_success', 'login_failed', 'logout', 'terms_accepted'], 'prefixes' => []],
     'tasks'    => ['label' => 'Client task log',           'actions' => ['restore_task', 'purge_task'], 'prefixes' => ['task_']],
     'reports'  => ['label' => 'Weekly / monthly reports',  'actions' => [], 'prefixes' => ['report_']],
-    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'purge_account', 'partner_account_opened', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business'], 'prefixes' => []],
+    'accounts' => ['label' => 'Accounts & approvals',      'actions' => ['staff_created', 'purge_account', 'partner_account_opened', 'approve_application', 'reject_application', 'role_change', 'status_change', 'soft_delete', 'restore', 'edit_user', 'edit_business', 'staff_assigned', 'staff_unassigned'], 'prefixes' => []],
     'payments' => ['label' => 'Payments & commissions',    'actions' => ['plan_requested', 'payment_submitted', 'payment_cancelled', 'deposit_submitted', 'approve_activation', 'reject_activation', 'approve_deposit', 'reject_deposit', 'referral_commission', 'unilevel_commission', 'basket_credit', 'balance_paid', 'update_transaction', 'restore_transaction', 'purge_transaction', 'commission_rate', 'payment_settings'], 'prefixes' => ['payout_', 'referral_']],
     'kyc'      => ['label' => 'KYC',                       'actions' => [], 'prefixes' => ['kyc_']],
     'packages' => ['label' => 'Packages',                  'actions' => ['create_package', 'restore_package', 'purge_package'], 'prefixes' => ['schedule_package', 'cancel_package', 'apply_package']],
@@ -1234,6 +1234,9 @@ function role_name(string $role): string
 // Turns "the database hasn't been migrated yet" errors into instructions.
 function db_error_message(?string $err): ?string
 {
+    if ($err && (str_contains($err, 'chat_threads') || str_contains($err, 'chat_messages') || str_contains($err, 'staff_assignments'))) {
+        return 'Messages are not set up in the database yet. Run supabase/migrations/20261209_chat.sql in the Supabase SQL Editor, then try again.';
+    }
     if ($err && (str_contains($err, 'profiles_role_check') || str_contains($err, 'profiles_affiliate_tier_check'))) {
         return 'The database is not up to date yet. Run the migrations in supabase/migrations (20261122, 20261124 and 20261125) in the Supabase SQL Editor, then try again.';
     }
@@ -1743,12 +1746,15 @@ function app_sidebar(array $items, string $title, ?string $active = null): strin
         'cash' => '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/>',
         'tool' => '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
         'bell' => '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+        'chat' => '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
         'log' => '<path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/>',
         'wheel' => '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/>',
         'tree' => '<circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v5M12 12l-7 5M12 12l7 5"/>',
         'user' => '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/>',
         'trash' => '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/>',
         'brief' => '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+        'book' => '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/>',
+        'education' => '<path d="M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/><path d="M22 10v6"/>',
     ];
     $svgOf = fn(?string $k): string => '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . ($icons[$k ?? 'home'] ?? '') . '</svg>';
     $isOn = fn(array $it): bool => isset($it['panel']) ? $active === $it['panel'] : (isset($it['href']) && empty($it['post']) && $active === $it['href']);
